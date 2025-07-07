@@ -30,7 +30,7 @@ export async function updateResume(config: Config): Promise<void> {
 
     // 6. 성공 메시지 전송
     const now = new Date();
-    if (now.getDay() === 1) {
+    if (now.getDay() === 1 && now.getHours() < 10) {
       await sendSuccessNotification(config.telegramToken, config.telegramChatId);
     }
   } catch (error) {
