@@ -23,8 +23,24 @@ jobs:
       - name: Install pnpm
         run: npm install -g pnpm
 
+      - name: Cache pnpm modules
+        uses: actions/cache@v3
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
       - name: Install dependencies
         run: pnpm install
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/ms-playwright/
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
@@ -41,13 +57,10 @@ jobs:
           DEBUG: pw:api # Playwright 디버그 로그 활성화
         run: node dist/index.js
 
-      # - name: Upload Playwright Artifacts on Failure
-      #   if: failure()
-      #   uses: actions/upload-artifact@v3
-      #   with:
-      #     name: playwright-artifacts
-      #     path: |
-      #       error-*.png
-      #       videos/
-      #       trace.zip
-      #       playwright.log
+      - name: Upload Playwright Artifacts on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            error-*.png
