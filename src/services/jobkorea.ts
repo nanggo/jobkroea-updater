@@ -182,7 +182,7 @@ export class JobKoreaService {
         throw error;
       }
       throw new UpdateError(
-        `경력 정보 업���이트 실패: ${
+        `경력 정보 업데이트 실패: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
