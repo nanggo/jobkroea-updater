@@ -3,6 +3,7 @@ import { updateResume } from "./updateResume";
 import { ConfigValidator } from "./utils/validation";
 import { Logger } from "./utils/logger";
 import * as fs from "fs";
+import * as path from "path";
 
 // dotenv는 로컬 개발 환경에서만 필요 (CI에서는 환경변수가 직접 주입됨)
 try {
@@ -13,15 +14,22 @@ try {
 
 function cleanupOldScreenshots(): void {
   try {
-    const files = fs.readdirSync(process.cwd());
+    const cwd = process.cwd();
+    const files = fs.readdirSync(cwd);
     const screenshotFiles = files.filter(f => f.startsWith("error-") && f.endsWith(".png"));
+    let deletedCount = 0;
 
     for (const file of screenshotFiles) {
-      fs.unlinkSync(`${process.cwd()}/${file}`);
+      try {
+        fs.unlinkSync(path.join(cwd, file));
+        deletedCount++;
+      } catch {
+        Logger.warning(`스크린샷 삭제 실패: ${file}`);
+      }
     }
 
-    if (screenshotFiles.length > 0) {
-      Logger.info(`이전 스크린샷 ${screenshotFiles.length}개 정리 완료`);
+    if (deletedCount > 0) {
+      Logger.info(`이전 스크린샷 ${deletedCount}개 정리 완료`);
     }
   } catch (error) {
     Logger.warning("스크린샷 정리 중 오류 발생");
