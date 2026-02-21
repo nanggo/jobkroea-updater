@@ -5,18 +5,28 @@ import { BrowserService } from "./services/browser";
 import { JobKoreaService } from "./services/jobkorea";
 import { sendTelegramMessage } from "./notify";
 import { withBrowserRestart } from "./utils/retry";
-import { RETRY_CONFIG } from "./constants";
+import { configManager } from "./config";
 
 export async function updateResume(config: Config): Promise<void> {
   const browserService = new BrowserService();
+  const retryConfig = configManager.getRetryConfig();
   let retryCount = 0;
+
+  // 프로세스 종료 시그널 수신 시 브라우저 정리
+  const gracefulShutdown = async (signal: string) => {
+    Logger.info(`${signal} 수신. 브라우저 정리 중...`);
+    await browserService.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
   try {
     await withBrowserRestart(
       async () => {
         retryCount++;
-        Logger.info(`이력서 업데이트 프로세스 시작 (시도 ${retryCount}/${RETRY_CONFIG.MAX_PROCESS_RETRIES})`);
-        
+        Logger.info(`이력서 업데이트 프로세스 시작 (시도 ${retryCount}/${retryConfig.maxProcessRetries})`);
+
         await browserService.initialize();
         const page = browserService.getPage();
         const jobKoreaService = new JobKoreaService(page);
@@ -44,22 +54,31 @@ export async function updateResume(config: Config): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 1000));
       },
       {
-        maxRetries: RETRY_CONFIG.MAX_PROCESS_RETRIES,
+        maxRetries: retryConfig.maxProcessRetries,
         operation: "이력서 업데이트 전체 프로세스",
       }
     );
 
     // 6. 성공 메시지 전송과 브라우저 정리를 병렬로 처리
-    await Promise.allSettled([
+    const results = await Promise.allSettled([
       sendSuccessNotification(config.telegramToken, config.telegramChatId, retryCount),
       browserService.close(),
     ]);
+
+    if (results[0].status === 'rejected') {
+      Logger.warning("성공 알림 전송 실패. Telegram 설정을 확인해주세요.");
+    }
   } catch (error) {
     // 에러 처리와 브라우저 정리를 병렬로 처리
-    await Promise.allSettled([
+    const results = await Promise.allSettled([
       handleError(error, config.telegramToken, config.telegramChatId, retryCount),
       browserService.close(),
     ]);
+
+    if (results[0].status === 'rejected') {
+      Logger.warning("실패 알림 전송 실패. Telegram 설정을 확인해주세요.");
+    }
+
     process.exit(1);
   }
 }
