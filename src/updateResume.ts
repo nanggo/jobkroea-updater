@@ -13,8 +13,11 @@ export async function updateResume(config: Config): Promise<void> {
   let retryCount = 0;
 
   // 프로세스 종료 시그널 수신 시 브라우저 정리
+  let isShuttingDown = false;
   const signalCodes: Record<string, number> = { SIGINT: 130, SIGTERM: 143 };
   const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
     Logger.info(`${signal} 수신. 브라우저 정리 중...`);
     await browserService.close();
     process.exit(signalCodes[signal] ?? 1);
