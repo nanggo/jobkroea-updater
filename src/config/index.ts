@@ -72,6 +72,11 @@ export interface AppConfig {
     includeTimestamp: boolean;
   };
   
+  // 업데이트 검증 설정
+  update: {
+    successPatterns: readonly string[];
+  };
+
   // 보안 설정
   security: {
     maskSensitiveInfo: boolean;
@@ -156,6 +161,10 @@ export const defaultConfig: AppConfig = {
     includeTimestamp: true,
   },
   
+  update: {
+    successPatterns: ["업데이트 되었습니다", "업데이트되었습니다", "수정되었습니다"],
+  },
+
   security: {
     maskSensitiveInfo: true,
     validateInputs: true,
@@ -241,6 +250,10 @@ class ConfigManager {
 
   getLoggingConfig() {
     return this.config.logging;
+  }
+
+  getUpdateConfig() {
+    return this.config.update;
   }
 
   getSecurityConfig() {

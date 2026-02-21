@@ -1,6 +1,6 @@
 // src/notify.ts
 import { withRetry } from "./utils/retry";
-import { RETRY_CONFIG } from "./constants";
+import { configManager } from "./config";
 import { Logger } from "./utils/logger";
 
 export async function sendTelegramMessage(
@@ -9,6 +9,8 @@ export async function sendTelegramMessage(
   message: string,
   parseMode: string = "HTML"
 ) {
+  const retryConfig = configManager.getRetryConfig();
+
   return await withRetry(
     async () => {
       const response = await fetch(
@@ -29,13 +31,13 @@ export async function sendTelegramMessage(
       if (!response.ok) {
         const errorBody = await response.text().catch(() => "Unknown error");
         const error = new Error(`Telegram API error: ${response.status} ${response.statusText} - ${errorBody}`);
-        
+
         // 4xx 에러는 영구적 오류로 간주하여 재시도하지 않음
         if (response.status >= 400 && response.status < 500) {
           Logger.error(`Telegram API 영구적 오류 (재시도 안함): ${error.message}`);
           throw error;
         }
-        
+
         // 5xx 에러나 네트워크 오류는 임시적 오류로 간주하여 재시도
         Logger.warning(`Telegram API 임시적 오류 (재시도 예정): ${error.message}`);
         throw error;
@@ -46,10 +48,10 @@ export async function sendTelegramMessage(
       return result;
     },
     {
-      maxRetries: RETRY_CONFIG.MAX_OPERATION_RETRIES,
-      baseDelay: RETRY_CONFIG.BASE_DELAY,
-      maxDelay: RETRY_CONFIG.MAX_DELAY,
-      backoffMultiplier: RETRY_CONFIG.BACKOFF_MULTIPLIER,
+      maxRetries: retryConfig.maxOperationRetries,
+      baseDelay: retryConfig.baseDelay,
+      maxDelay: retryConfig.maxDelay,
+      backoffMultiplier: retryConfig.backoffMultiplier,
       operation: "Telegram 메시지 전송",
     }
   );

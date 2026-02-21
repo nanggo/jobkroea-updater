@@ -2,12 +2,44 @@
 import { updateResume } from "./updateResume";
 import { ConfigValidator } from "./utils/validation";
 import { Logger } from "./utils/logger";
-import dotenv from "dotenv";
+import * as fs from "fs";
+import * as path from "path";
 
-dotenv.config();
+// dotenv는 로컬 개발 환경에서만 필요 (CI에서는 환경변수가 직접 주입됨)
+try {
+  require("dotenv").config();
+} catch {
+  // dotenv가 설치되지 않은 환경 (CI 등)에서는 무시
+}
+
+function cleanupOldScreenshots(): void {
+  try {
+    const cwd = process.cwd();
+    const files = fs.readdirSync(cwd);
+    const screenshotFiles = files.filter(f => f.startsWith("error-") && f.endsWith(".png"));
+    let deletedCount = 0;
+
+    for (const file of screenshotFiles) {
+      try {
+        fs.unlinkSync(path.join(cwd, file));
+        deletedCount++;
+      } catch {
+        Logger.warning(`스크린샷 삭제 실패: ${file}`);
+      }
+    }
+
+    if (deletedCount > 0) {
+      Logger.info(`이전 스크린샷 ${deletedCount}개 정리 완료`);
+    }
+  } catch (error) {
+    Logger.warning("스크린샷 정리 중 오류 발생");
+  }
+}
 
 async function main() {
   try {
+    cleanupOldScreenshots();
+
     // 환경변수 존재 여부 검증
     const envValidation = ConfigValidator.validateEnvironmentVariables();
     if (!envValidation.isValid) {
