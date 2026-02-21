@@ -73,4 +73,5 @@ jobs:
             error-*.png
 
       - name: Keepalive
+        if: always()
         uses: gautamkrishnar/keepalive-workflow@v2
