@@ -71,3 +71,7 @@ jobs:
           name: playwright-artifacts
           path: |
             error-*.png
+
+      - name: Keepalive
+        if: always()
+        uses: gautamkrishnar/keepalive-workflow@v2
