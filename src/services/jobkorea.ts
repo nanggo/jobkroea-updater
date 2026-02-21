@@ -238,17 +238,14 @@ export class JobKoreaService {
         } catch (error) {
           const screenshotPath = `error-update-${Date.now()}.png`;
 
-          // 스크린샷 촬영을 비동기로 처리 (에러 전파 차단)
-          Promise.resolve().then(async () => {
-            try {
-              const pageToScreenshot =
-                resumePopup && !resumePopup.isClosed() ? resumePopup : this.page;
-              await pageToScreenshot.screenshot({ path: screenshotPath, fullPage: true });
-              Logger.error(`업데이트 실패. 스크린샷 저장: ${screenshotPath}`);
-            } catch (screenshotError) {
-              Logger.error("스크린샷 저장 실패", screenshotError as Error);
-            }
-          });
+          try {
+            const pageToScreenshot =
+              resumePopup && !resumePopup.isClosed() ? resumePopup : this.page;
+            await pageToScreenshot.screenshot({ path: screenshotPath, fullPage: true });
+            Logger.error(`업데이트 실패. 스크린샷 저장: ${screenshotPath}`);
+          } catch (screenshotError) {
+            Logger.error("스크린샷 저장 실패", screenshotError as Error);
+          }
 
           if (
             error instanceof UpdateError ||
