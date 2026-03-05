@@ -39,7 +39,8 @@ export async function sendTelegramMessage(
         const errorBody = await response.text().catch(() => "Unknown error");
         const errorMessage = `Telegram API error: ${response.status} ${response.statusText} - ${errorBody}`;
 
-        if (response.status >= 400 && response.status < 500) {
+        // Telegram 429는 일시적 throttling이므로 재시도 대상이다.
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           Logger.error(`Telegram API 영구적 오류 (재시도 안함): ${errorMessage}`);
           throw new NonRetryableError(errorMessage);
         }
