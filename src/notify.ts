@@ -10,6 +10,35 @@ class NonRetryableError extends Error {
   }
 }
 
+class RetryableError extends Error {
+  retryAfterMs?: number;
+
+  constructor(message: string, retryAfterMs?: number) {
+    super(message);
+    this.name = "RetryableError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function parseRetryAfterMs(retryAfterHeader: string | null): number | undefined {
+  if (!retryAfterHeader) return undefined;
+
+  const seconds = Number(retryAfterHeader);
+  if (!Number.isNaN(seconds) && seconds > 0) {
+    return seconds * 1000;
+  }
+
+  const retryAt = Date.parse(retryAfterHeader);
+  if (!Number.isNaN(retryAt)) {
+    const diffMs = retryAt - Date.now();
+    if (diffMs > 0) {
+      return diffMs;
+    }
+  }
+
+  return undefined;
+}
+
 export async function sendTelegramMessage(
   token: string,
   chatId: string,
@@ -45,8 +74,10 @@ export async function sendTelegramMessage(
           throw new NonRetryableError(errorMessage);
         }
 
+        const retryAfterMs =
+          response.status === 429 ? parseRetryAfterMs(response.headers.get("retry-after")) : undefined;
         Logger.warning(`Telegram API 임시적 오류 (재시도 예정): ${errorMessage}`);
-        throw new Error(errorMessage);
+        throw new RetryableError(errorMessage, retryAfterMs);
       }
 
       const result = await response.json();

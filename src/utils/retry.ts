@@ -10,6 +10,14 @@ export interface RetryOptions {
   shouldRetry?: (error: Error, attempt: number) => boolean;
 }
 
+function getRetryAfterMs(error: Error): number | undefined {
+  const retryAfterMs = (error as Error & { retryAfterMs?: number }).retryAfterMs;
+  if (typeof retryAfterMs === "number" && retryAfterMs > 0) {
+    return retryAfterMs;
+  }
+  return undefined;
+}
+
 export async function withRetry<T>(
   fn: () => Promise<T>,
   options: RetryOptions = {}
@@ -49,7 +57,8 @@ export async function withRetry<T>(
         throw lastError;
       }
 
-      const delay = Math.min(baseDelay * Math.pow(backoffMultiplier, attempt - 1), maxDelay);
+      const calculatedDelay = Math.min(baseDelay * Math.pow(backoffMultiplier, attempt - 1), maxDelay);
+      const delay = getRetryAfterMs(lastError) ?? calculatedDelay;
       Logger.warning(
         `${operation} 실패 (${attempt}/${maxRetries}). ${delay}ms 후 재시도... 오류: ${lastError.message}`
       );
