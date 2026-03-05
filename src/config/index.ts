@@ -1,13 +1,11 @@
 // src/config/index.ts
-import { Config } from "../types";
-
 export interface AppConfig {
   // URL 설정
   urls: {
     login: string;
     mypage: string;
   };
-  
+
   // CSS 셀렉터 설정 (fallback 포함)
   selectors: {
     login: {
@@ -20,15 +18,14 @@ export interface AppConfig {
       updateButton: readonly string[];
     };
   };
-  
+
   // 타임아웃 설정
   timeouts: {
     navigation: number;
     element: number;
     popup: number;
-    updateDelay: number;
   };
-  
+
   // 재시도 설정
   retry: {
     maxOperationRetries: number;
@@ -37,7 +34,7 @@ export interface AppConfig {
     maxDelay: number;
     backoffMultiplier: number;
   };
-  
+
   // 브라우저 설정
   browser: {
     headless: boolean;
@@ -53,25 +50,14 @@ export interface AppConfig {
       unnecessaryImages: boolean;
     };
   };
-  
-  // 적응형 타임아웃 설정
-  adaptiveTimeout: {
-    baseTimeout: number;
-    minTimeout: number;
-    maxTimeout: number;
-    measurementWindow: number;
-    successThreshold: number;
-    failureMultiplier: number;
-    successMultiplier: number;
-  };
-  
+
   // 로깅 설정
   logging: {
     enableSensitiveDataMasking: boolean;
-    logLevel: 'error' | 'warn' | 'info' | 'debug';
+    logLevel: "error" | "warn" | "info" | "debug";
     includeTimestamp: boolean;
   };
-  
+
   // 업데이트 검증 설정
   update: {
     successPatterns: readonly string[];
@@ -80,8 +66,6 @@ export interface AppConfig {
   // 보안 설정
   security: {
     maskSensitiveInfo: boolean;
-    validateInputs: boolean;
-    enforceHttps: boolean;
   };
 }
 
@@ -90,26 +74,35 @@ export const defaultConfig: AppConfig = {
     login: "https://www.jobkorea.co.kr/Login/",
     mypage: "https://www.jobkorea.co.kr/User/Mypage",
   },
-  
+
   selectors: {
     login: {
       idInput: [".input-id", "#user_id", 'input[name="user_id"]', 'input[type="text"]'],
-      passwordInput: [".input-password", "#user_pwd", 'input[name="user_pwd"]', 'input[type="password"]'],
-      loginButton: [".login-button", "#login_btn", 'button[type="submit"]', '.btn-login'],
+      passwordInput: [
+        ".input-password",
+        "#user_pwd",
+        'input[name="user_pwd"]',
+        'input[type="password"]',
+      ],
+      loginButton: [".login-button", "#login_btn", 'button[type="submit"]', ".btn-login"],
     },
     mypage: {
       statusLink: [".status a", ".my-status a", 'a[href*="status"]', ".resume-status a"],
-      updateButton: [".button-update", ".btn-update", 'button[onclick*="update"]', ".update-btn"],
+      updateButton: [
+        ".button-update",
+        ".btn-update",
+        'button[onclick*="update"]',
+        ".update-btn",
+      ],
     },
   },
-  
+
   timeouts: {
     navigation: 20000,
     element: 15000,
     popup: 10000,
-    updateDelay: 3000,
   },
-  
+
   retry: {
     maxOperationRetries: 3,
     maxProcessRetries: 3,
@@ -117,7 +110,7 @@ export const defaultConfig: AppConfig = {
     maxDelay: 10000,
     backoffMultiplier: 2,
   },
-  
+
   browser: {
     headless: true,
     viewport: {
@@ -125,17 +118,17 @@ export const defaultConfig: AppConfig = {
       height: 720,
     },
     args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--disable-gpu',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      '--memory-pressure-off',
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-accelerated-2d-canvas",
+      "--no-first-run",
+      "--no-zygote",
+      "--disable-gpu",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--memory-pressure-off",
     ],
     blockResources: {
       ads: true,
@@ -144,122 +137,96 @@ export const defaultConfig: AppConfig = {
       unnecessaryImages: true,
     },
   },
-  
-  adaptiveTimeout: {
-    baseTimeout: 15000,
-    minTimeout: 5000,
-    maxTimeout: 30000,
-    measurementWindow: 10,
-    successThreshold: 0.8,
-    failureMultiplier: 1.5,
-    successMultiplier: 0.9,
-  },
-  
+
   logging: {
     enableSensitiveDataMasking: true,
-    logLevel: 'info',
+    logLevel: "info",
     includeTimestamp: true,
   },
-  
+
   update: {
     successPatterns: ["업데이트 되었습니다", "업데이트되었습니다", "수정되었습니다"],
   },
 
   security: {
     maskSensitiveInfo: true,
-    validateInputs: true,
-    enforceHttps: true,
   },
 };
 
-class ConfigManager {
-  private static instance: ConfigManager;
-  private config: AppConfig;
+function loadEnvironmentOverrides(baseConfig: AppConfig): AppConfig {
+  const config: AppConfig = {
+    ...baseConfig,
+    urls: { ...baseConfig.urls },
+    retry: { ...baseConfig.retry },
+    browser: { ...baseConfig.browser },
+    logging: { ...baseConfig.logging },
+  };
 
-  private constructor() {
-    this.config = { ...defaultConfig };
-    this.loadEnvironmentOverrides();
+  if (process.env.JOBKOREA_LOGIN_URL) {
+    config.urls.login = process.env.JOBKOREA_LOGIN_URL;
   }
 
-  static getInstance(): ConfigManager {
-    if (!ConfigManager.instance) {
-      ConfigManager.instance = new ConfigManager();
-    }
-    return ConfigManager.instance;
+  if (process.env.JOBKOREA_MYPAGE_URL) {
+    config.urls.mypage = process.env.JOBKOREA_MYPAGE_URL;
   }
 
-  private loadEnvironmentOverrides(): void {
-    // 환경변수로 설정 오버라이드 가능
-    if (process.env.JOBKOREA_LOGIN_URL) {
-      this.config.urls.login = process.env.JOBKOREA_LOGIN_URL;
-    }
-    
-    if (process.env.JOBKOREA_MYPAGE_URL) {
-      this.config.urls.mypage = process.env.JOBKOREA_MYPAGE_URL;
-    }
-    
-    if (process.env.BROWSER_HEADLESS) {
-      this.config.browser.headless = process.env.BROWSER_HEADLESS === 'true';
-    }
-    
-    if (process.env.MAX_RETRIES) {
-      const maxRetries = parseInt(process.env.MAX_RETRIES, 10);
-      if (!isNaN(maxRetries) && maxRetries > 0) {
-        this.config.retry.maxOperationRetries = maxRetries;
-        this.config.retry.maxProcessRetries = maxRetries;
-      }
-    }
-    
-    if (process.env.LOG_LEVEL && ['error', 'warn', 'info', 'debug'].includes(process.env.LOG_LEVEL)) {
-      this.config.logging.logLevel = process.env.LOG_LEVEL as 'error' | 'warn' | 'info' | 'debug';
+  if (process.env.BROWSER_HEADLESS) {
+    config.browser.headless = process.env.BROWSER_HEADLESS === "true";
+  }
+
+  if (process.env.MAX_RETRIES) {
+    const maxRetries = parseInt(process.env.MAX_RETRIES, 10);
+    if (!isNaN(maxRetries) && maxRetries > 0) {
+      config.retry.maxOperationRetries = maxRetries;
+      config.retry.maxProcessRetries = maxRetries;
     }
   }
 
-  getConfig(): AppConfig {
-    return { ...this.config };
+  if (process.env.LOG_LEVEL && ["error", "warn", "info", "debug"].includes(process.env.LOG_LEVEL)) {
+    config.logging.logLevel = process.env.LOG_LEVEL as "error" | "warn" | "info" | "debug";
   }
 
-  updateConfig(updates: Partial<AppConfig>): void {
-    this.config = { ...this.config, ...updates };
-  }
-
-  // 편의 메서드들
-  getUrls() {
-    return this.config.urls;
-  }
-
-  getSelectors() {
-    return this.config.selectors;
-  }
-
-  getTimeouts() {
-    return this.config.timeouts;
-  }
-
-  getRetryConfig() {
-    return this.config.retry;
-  }
-
-  getBrowserConfig() {
-    return this.config.browser;
-  }
-
-  getAdaptiveTimeoutConfig() {
-    return this.config.adaptiveTimeout;
-  }
-
-  getLoggingConfig() {
-    return this.config.logging;
-  }
-
-  getUpdateConfig() {
-    return this.config.update;
-  }
-
-  getSecurityConfig() {
-    return this.config.security;
-  }
+  return config;
 }
 
-export const configManager = ConfigManager.getInstance();
+const appConfig = loadEnvironmentOverrides(defaultConfig);
+
+export const configManager = {
+  getConfig(): AppConfig {
+    return appConfig;
+  },
+
+  getUrls() {
+    return appConfig.urls;
+  },
+
+  getSelectors() {
+    return appConfig.selectors;
+  },
+
+  getTimeouts() {
+    return appConfig.timeouts;
+  },
+
+  getRetryConfig() {
+    return appConfig.retry;
+  },
+
+  getBrowserConfig() {
+    return appConfig.browser;
+  },
+
+  getLoggingConfig() {
+    return appConfig.logging;
+  },
+
+  getUpdateConfig() {
+    return appConfig.update;
+  },
+
+  getSecurityConfig() {
+    return appConfig.security;
+  },
+};
+
 export default configManager;

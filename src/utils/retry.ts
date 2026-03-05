@@ -7,6 +7,7 @@ export interface RetryOptions {
   maxDelay?: number;
   backoffMultiplier?: number;
   operation?: string;
+  shouldRetry?: (error: Error, attempt: number) => boolean;
 }
 
 export async function withRetry<T>(
@@ -20,6 +21,7 @@ export async function withRetry<T>(
     maxDelay = retryConfig.maxDelay,
     backoffMultiplier = retryConfig.backoffMultiplier,
     operation = "작업",
+    shouldRetry = () => true,
   } = options;
 
   let lastError: Error = new Error("No attempts made");
@@ -36,6 +38,11 @@ export async function withRetry<T>(
       return result;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+
+      if (!shouldRetry(lastError, attempt)) {
+        Logger.warning(`${operation} 재시도 중단. 오류: ${lastError.message}`);
+        throw lastError;
+      }
 
       if (attempt === maxRetries) {
         Logger.error(`${operation} 최종 실패 (${maxRetries}번 시도 후)`, lastError);
@@ -63,6 +70,7 @@ export async function withBrowserRestart<T>(
   const {
     maxRetries = retryConfig.maxProcessRetries,
     operation = "전체 프로세스",
+    shouldRetry = () => true,
   } = options;
 
   let lastError: Error = new Error("No attempts made");
@@ -79,6 +87,11 @@ export async function withBrowserRestart<T>(
       return result;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+
+      if (!shouldRetry(lastError, attempt)) {
+        Logger.warning(`${operation} 재시도 중단. 오류: ${lastError.message}`);
+        throw lastError;
+      }
 
       if (attempt === maxRetries) {
         Logger.error(`${operation} 최종 실패 (${maxRetries}번 시도 후)`, lastError);
