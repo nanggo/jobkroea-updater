@@ -157,30 +157,9 @@ function loadEnvironmentOverrides(baseConfig: AppConfig): AppConfig {
   const config: AppConfig = {
     ...baseConfig,
     urls: { ...baseConfig.urls },
-    selectors: {
-      login: {
-        idInput: [...baseConfig.selectors.login.idInput],
-        passwordInput: [...baseConfig.selectors.login.passwordInput],
-        loginButton: [...baseConfig.selectors.login.loginButton],
-      },
-      mypage: {
-        statusLink: [...baseConfig.selectors.mypage.statusLink],
-        updateButton: [...baseConfig.selectors.mypage.updateButton],
-      },
-    },
-    timeouts: { ...baseConfig.timeouts },
     retry: { ...baseConfig.retry },
-    browser: {
-      ...baseConfig.browser,
-      viewport: { ...baseConfig.browser.viewport },
-      args: [...baseConfig.browser.args],
-      blockResources: { ...baseConfig.browser.blockResources },
-    },
+    browser: { ...baseConfig.browser },
     logging: { ...baseConfig.logging },
-    update: {
-      successPatterns: [...baseConfig.update.successPatterns],
-    },
-    security: { ...baseConfig.security },
   };
 
   if (process.env.JOBKOREA_LOGIN_URL) {
