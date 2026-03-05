@@ -76,11 +76,6 @@ export class BrowserService {
       }
 
       this.page = await this.context.newPage();
-      
-      // 페이지 레벨 최적화
-      await this.page.setExtraHTTPHeaders({
-        'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
-      });
 
       Logger.info("브라우저 초기화 완료 (최적화 적용)");
     } catch (error) {

@@ -7,6 +7,15 @@ export interface RetryOptions {
   maxDelay?: number;
   backoffMultiplier?: number;
   operation?: string;
+  shouldRetry?: (error: Error, attempt: number) => boolean;
+}
+
+function getRetryAfterMs(error: Error): number | undefined {
+  const retryAfterMs = (error as Error & { retryAfterMs?: number }).retryAfterMs;
+  if (typeof retryAfterMs === "number" && retryAfterMs > 0) {
+    return retryAfterMs;
+  }
+  return undefined;
 }
 
 export async function withRetry<T>(
@@ -20,6 +29,7 @@ export async function withRetry<T>(
     maxDelay = retryConfig.maxDelay,
     backoffMultiplier = retryConfig.backoffMultiplier,
     operation = "작업",
+    shouldRetry = () => true,
   } = options;
 
   let lastError: Error = new Error("No attempts made");
@@ -37,12 +47,18 @@ export async function withRetry<T>(
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
 
+      if (!shouldRetry(lastError, attempt)) {
+        Logger.warning(`${operation} 재시도 중단. 오류: ${lastError.message}`);
+        throw lastError;
+      }
+
       if (attempt === maxRetries) {
         Logger.error(`${operation} 최종 실패 (${maxRetries}번 시도 후)`, lastError);
         throw lastError;
       }
 
-      const delay = Math.min(baseDelay * Math.pow(backoffMultiplier, attempt - 1), maxDelay);
+      const calculatedDelay = Math.min(baseDelay * Math.pow(backoffMultiplier, attempt - 1), maxDelay);
+      const delay = getRetryAfterMs(lastError) ?? calculatedDelay;
       Logger.warning(
         `${operation} 실패 (${attempt}/${maxRetries}). ${delay}ms 후 재시도... 오류: ${lastError.message}`
       );
@@ -63,6 +79,7 @@ export async function withBrowserRestart<T>(
   const {
     maxRetries = retryConfig.maxProcessRetries,
     operation = "전체 프로세스",
+    shouldRetry = () => true,
   } = options;
 
   let lastError: Error = new Error("No attempts made");
@@ -79,6 +96,11 @@ export async function withBrowserRestart<T>(
       return result;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+
+      if (!shouldRetry(lastError, attempt)) {
+        Logger.warning(`${operation} 재시도 중단. 오류: ${lastError.message}`);
+        throw lastError;
+      }
 
       if (attempt === maxRetries) {
         Logger.error(`${operation} 최종 실패 (${maxRetries}번 시도 후)`, lastError);
