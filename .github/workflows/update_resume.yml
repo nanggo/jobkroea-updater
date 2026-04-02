@@ -69,6 +69,7 @@ jobs:
           name: playwright-artifacts
           path: |
             error-*.png
+            error-*.html
 
   workflow-keepalive:
     if: github.event_name == 'schedule'
