@@ -102,13 +102,7 @@ export class JobKoreaService {
 
         await this.page.click(loginButtonSelector);
 
-        // 로그인 폼이 사라졌는지 확인하여 성공 판정
-        await this.page.waitForSelector(idSelector, {
-          state: "detached",
-          timeout: this.timeouts.navigation,
-        });
-
-        // 로그인 페이지에서 벗어났는지 URL 검증
+        // 로그인 페이지에서 벗어났는지 URL 검증으로 성공 판정
         await this.page.waitForURL(url => !url.pathname.includes("/Login/"), {
           timeout: this.timeouts.navigation,
         });
