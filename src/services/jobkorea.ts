@@ -1,3 +1,4 @@
+import { writeFile } from "fs/promises";
 import { Page } from "playwright";
 import { configManager } from "../config";
 import { Logger } from "../utils/logger";
@@ -56,9 +57,28 @@ export class JobKoreaService {
         maxRetries: this.retryConfig.maxOperationRetries,
         operation: "로그인 페이지 이동",
       }
-    ).catch(() => {
+    ).catch(async (originalError: Error) => {
+      const timestamp = Date.now();
+      const screenshotPath = `error-navigate-${timestamp}.png`;
+      const htmlPath = `error-navigate-${timestamp}.html`;
+
+      const results = await Promise.allSettled([
+        this.page.screenshot({ path: screenshotPath, fullPage: true }),
+        this.page.content().then((html) => writeFile(htmlPath, html, "utf-8")),
+      ]);
+
+      for (const [i, result] of results.entries()) {
+        const label = i === 0 ? "스크린샷" : "HTML";
+        const path = i === 0 ? screenshotPath : htmlPath;
+        if (result.status === "fulfilled") {
+          Logger.error(`로그인 페이지 이동 실패. ${label} 저장: ${path}`);
+        } else {
+          Logger.warning(`${label} 저장 실패: ${result.reason}`);
+        }
+      }
+
       throw new NavigationError(
-        `로그인 페이지로 이동하는데 실패했습니다. (${this.retryConfig.maxOperationRetries}번 재시도)`
+        `로그인 페이지로 이동하는데 실패했습니다. (${this.retryConfig.maxOperationRetries}번 재시도): ${originalError.message}`
       );
     });
   }
@@ -80,16 +100,17 @@ export class JobKoreaService {
           state: "visible",
         });
 
-        await Promise.all([
-          this.page.waitForNavigation({
-            waitUntil: "networkidle",
-            timeout: this.timeouts.navigation,
-          }),
-          this.page.click(loginButtonSelector),
-        ]);
+        await this.page.click(loginButtonSelector);
 
-        await this.waitForAnySelector(this.selectors.mypage.statusLink, {
-          state: "visible",
+        // 로그인 폼이 사라졌는지 확인하여 성공 판정
+        await this.page.waitForSelector(idSelector, {
+          state: "detached",
+          timeout: this.timeouts.navigation,
+        });
+
+        // 로그인 페이지에서 벗어났는지 URL 검증
+        await this.page.waitForURL(url => !url.pathname.includes("/Login/"), {
+          timeout: this.timeouts.navigation,
         });
 
         Logger.success("로그인 성공 및 페이지 전환 확인 완료");
@@ -98,7 +119,7 @@ export class JobKoreaService {
         maxRetries: this.retryConfig.maxOperationRetries,
         operation: "로그인",
       }
-    ).catch(async () => {
+    ).catch(async (originalError: Error) => {
       const screenshotPath = `error-login-${Date.now()}.png`;
 
       const [screenshotResult] = await Promise.allSettled([
@@ -111,7 +132,7 @@ export class JobKoreaService {
         Logger.error(`로그인 실패. 스크린샷 저장 실패: ${screenshotResult.reason}`);
       }
 
-      throw new AuthenticationError("로그인 실패");
+      throw new AuthenticationError(`로그인 실패: ${originalError.message}`);
     });
   }
 
