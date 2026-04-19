@@ -23,6 +23,22 @@ export class JobKoreaService {
     const { state = "visible" } = options;
     const timeout = options.timeout || this.timeouts.element;
 
+    if (state === "visible") {
+      await this.page.waitForSelector(selectors.join(", "), {
+        state,
+        timeout,
+      });
+
+      for (const selector of selectors) {
+        if (await this.page.locator(selector).first().isVisible()) {
+          Logger.info(`셀렉터 성공: ${selector}`);
+          return selector;
+        }
+      }
+
+      throw new Error(`표시된 셀렉터를 찾지 못했습니다: ${selectors.join(", ")}`);
+    }
+
     for (const selector of selectors) {
       try {
         await this.page.waitForSelector(selector, {
