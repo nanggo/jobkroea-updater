@@ -42,16 +42,48 @@ export class JobKoreaService {
   async navigateToLoginPage(): Promise<void> {
     await withRetry(
       async () => {
-        await this.page.goto(this.urls.login, {
-          waitUntil: "domcontentloaded",
+        const response = await this.page.goto(this.urls.login, {
+          waitUntil: "commit",
           timeout: this.timeouts.navigation,
         });
 
+        Logger.info(
+          "로그인 페이지 최초 응답 수신",
+          {
+            requestedUrl: this.urls.login,
+            currentUrl: this.page.url(),
+            responseUrl: response?.url() ?? null,
+            status: response?.status() ?? null,
+            ok: response?.ok() ?? null,
+          },
+          "navigation"
+        );
+
+        try {
+          await this.page.waitForLoadState("domcontentloaded", {
+            timeout: Math.floor(this.timeouts.navigation / 2),
+          });
+        } catch (error) {
+          Logger.warning(
+            "DOMContentLoaded 대기 시간 초과. 셀렉터 기준으로 계속 진행합니다.",
+            {
+              currentUrl: this.page.url(),
+              reason: error instanceof Error ? error.message : String(error),
+            },
+            "navigation"
+          );
+        }
+
         await this.waitForAnySelector(this.selectors.login.idInput, {
           state: "visible",
+          timeout: this.timeouts.navigation,
         });
 
-        Logger.success("로그인 페이지로 성공적으로 이동 및 확인 완료");
+        Logger.success(
+          "로그인 페이지로 성공적으로 이동 및 확인 완료",
+          { currentUrl: this.page.url() },
+          "navigation"
+        );
       },
       {
         maxRetries: this.retryConfig.maxOperationRetries,
@@ -78,7 +110,11 @@ export class JobKoreaService {
       }
 
       throw new NavigationError(
-        `로그인 페이지로 이동하는데 실패했습니다. (${this.retryConfig.maxOperationRetries}번 재시도): ${originalError.message}`
+        `로그인 페이지로 이동하는데 실패했습니다. (${this.retryConfig.maxOperationRetries}번 재시도): ${originalError.message}`,
+        {
+          requestedUrl: this.urls.login,
+          currentUrl: this.page.url(),
+        }
       );
     });
   }
