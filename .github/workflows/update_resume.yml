@@ -76,15 +76,29 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          MESSAGE="$(cat <<EOF
-          ❌ 이력서 업데이트 최종 실패!
+          if [ "${RUN_ATTEMPT}" = "1" ]; then
+            MESSAGE="$(cat <<EOF
+          ⚠️ 이력서 업데이트 일시 실패
           이유: GitHub Actions runner에서 JobKorea 로그인 페이지에 연결할 수 없습니다.
+          조치: 새 runner로 자동 재시도 예정입니다. (최대 1회)
           대상: https://www.jobkorea.co.kr/Login/
           확인: ${RUN_URL}
           시간: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S KST')
           EOF
           )"
+          else
+            MESSAGE="$(cat <<EOF
+          ❌ 이력서 업데이트 최종 실패!
+          이유: GitHub Actions runner에서 JobKorea 로그인 페이지에 연결할 수 없습니다.
+          재시도: 자동 재시도 후에도 연결 실패
+          대상: https://www.jobkorea.co.kr/Login/
+          확인: ${RUN_URL}
+          시간: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S KST')
+          EOF
+          )"
+          fi
 
           curl --silent --show-error --fail \
             --request POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
