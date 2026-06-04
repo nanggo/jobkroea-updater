@@ -14,6 +14,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Local Playwright tooling
+.playwright-cli/
+.playwright-mcp/
+
 # OS files
 .DS_Store
 Thumbs.db
