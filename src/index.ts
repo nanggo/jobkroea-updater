@@ -1,51 +1,77 @@
 // src/index.ts
-import { updateResume } from "./updateResume";
-import { ConfigValidator } from "./utils/validation";
-import { Logger } from "./utils/logger";
 import * as fs from "fs";
 import * as path from "path";
 
-// dotenv는 로컬 개발 환경에서만 필요 (CI에서는 환경변수가 직접 주입됨)
+let dotenvLoadError: unknown;
 try {
   require("dotenv").config();
-} catch {
-  // dotenv가 설치되지 않은 환경 (CI 등)에서는 무시
+} catch (error) {
+  dotenvLoadError = error;
 }
 
-function cleanupOldScreenshots(): void {
+// 설정 모듈은 dotenv 처리 후 로드해야 로컬 .env override가 반영된다.
+const { updateResume }: typeof import("./updateResume") = require("./updateResume");
+const { ConfigValidator }: typeof import("./utils/validation") = require("./utils/validation");
+const { Logger }: typeof import("./utils/logger") = require("./utils/logger");
+const { configManager }: typeof import("./config") = require("./config");
+
+function cleanupOldDiagnostics(): void {
   try {
     const cwd = process.cwd();
-    const files = fs.readdirSync(cwd);
-    const screenshotFiles = files.filter(f => f.startsWith("error-") && f.endsWith(".png"));
+    const directories = [cwd, path.join(cwd, "diagnostics")];
     let deletedCount = 0;
 
-    for (const file of screenshotFiles) {
-      try {
-        fs.unlinkSync(path.join(cwd, file));
-        deletedCount++;
-      } catch {
-        Logger.warning(`스크린샷 삭제 실패: ${file}`);
+    for (const directory of directories) {
+      if (!fs.existsSync(directory)) continue;
+
+      const files = fs.readdirSync(directory);
+      const diagnosticFiles = files.filter(file =>
+        /^error-.*\.(png|html)$/.test(file)
+      );
+
+      for (const file of diagnosticFiles) {
+        try {
+          fs.unlinkSync(path.join(directory, file));
+          deletedCount++;
+        } catch {
+          Logger.warning(`진단 파일 삭제 실패: ${file}`);
+        }
       }
     }
 
     if (deletedCount > 0) {
-      Logger.info(`이전 스크린샷 ${deletedCount}개 정리 완료`);
+      Logger.info(`이전 진단 파일 ${deletedCount}개 정리 완료`);
     }
-  } catch (error) {
-    Logger.warning("스크린샷 정리 중 오류 발생");
+  } catch {
+    Logger.warning("진단 파일 정리 중 오류 발생");
   }
 }
 
 async function main() {
   try {
-    cleanupOldScreenshots();
+    if (dotenvLoadError) {
+      Logger.debug("dotenv를 불러오지 못했습니다. 주입된 환경변수를 사용합니다.");
+    }
+
+    cleanupOldDiagnostics();
 
     // 환경변수 존재 여부 검증
     const envValidation = ConfigValidator.validateEnvironmentVariables();
     if (!envValidation.isValid) {
       Logger.error("환경변수 검증 실패:");
       envValidation.errors.forEach(error => Logger.error(`  - ${error}`));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
+    }
+
+    const urlValidation = ConfigValidator.validateJobKoreaUrls(
+      configManager.getUrls()
+    );
+    if (!urlValidation.isValid) {
+      Logger.error("JobKorea URL 검증 실패:");
+      urlValidation.errors.forEach(error => Logger.error(`  - ${error}`));
+      process.exitCode = 1;
+      return;
     }
 
     // 설정 객체 생성
@@ -55,12 +81,14 @@ async function main() {
       telegramToken: process.env.TELEGRAM_BOT_TOKEN!,
       telegramChatId: process.env.TELEGRAM_CHAT_ID!,
     };
+    Logger.registerSensitiveValues(Object.values(config));
 
     // 설정 값 형식 검증
     const configValidation = ConfigValidator.validateConfig(config);
     if (!configValidation.isValid) {
       Logger.error("설정 검증 실패. 환경변수를 확인해주세요.");
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
     Logger.info("애플리케이션 시작");
@@ -68,8 +96,8 @@ async function main() {
     Logger.success("애플리케이션 정상 종료");
   } catch (error) {
     Logger.error("애플리케이션 실행 중 치명적 오류 발생", error as Error);
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
-main();
+void main();

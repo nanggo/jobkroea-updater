@@ -12,14 +12,20 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   lint-and-build:
-    runs-on: ubuntu-latest
+    # Ubuntu 22.04 permits Chromium's unprivileged user-namespace sandbox.
+    runs-on: ubuntu-22.04
     timeout-minutes: 10
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -35,8 +41,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install chromium --with-deps
+
+      - name: Verify sandboxed browser launch
+        run: pnpm test:browser
+
       - name: Run lint
         run: pnpm lint
+
+      - name: Run tests
+        run: pnpm test
 
       - name: Run build
         run: pnpm build

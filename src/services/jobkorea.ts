@@ -1,17 +1,354 @@
-import { writeFile } from "fs/promises";
-import { Page } from "playwright";
+import { chmod, mkdir, writeFile } from "fs/promises";
+import * as path from "path";
+import { Locator, Page } from "playwright";
 import { configManager } from "../config";
 import { Logger } from "../utils/logger";
 import { withRetry } from "../utils/retry";
-import { AuthenticationError, NavigationError, UpdateError } from "../types";
+import {
+  AuthenticationError,
+  isRetryableJobKoreaError,
+  NavigationError,
+  UpdateError,
+} from "../types";
+import {
+  isJobKoreaLoginPath,
+  isTrustedJobKoreaUrl,
+} from "../utils/jobkoreaUrl";
+import {
+  armCredentialEgressGuard,
+  consumeBlockedContextNavigation,
+  consumeBlockedTopLevelNavigation,
+  disarmCredentialEgressGuard,
+} from "../utils/trustedNavigation";
+
+interface LoginForm {
+  form: Locator;
+  idInput: Locator;
+  passwordInput: Locator;
+  loginButton: Locator;
+}
 
 export class JobKoreaService {
   private readonly urls = configManager.getUrls();
   private readonly selectors = configManager.getSelectors();
   private readonly timeouts = configManager.getTimeouts();
   private readonly retryConfig = configManager.getRetryConfig();
+  private readonly diagnosticsConfig = configManager.getDiagnosticsConfig();
 
   constructor(private readonly page: Page) {}
+
+  private assertTrustedUrl(
+    url: string,
+    operation: "navigation" | "authentication" | "update"
+  ): void {
+    if (isTrustedJobKoreaUrl(url)) return;
+
+    const message = `신뢰할 수 없는 JobKorea URL이 감지되었습니다: ${url}`;
+    const context = { currentUrl: url };
+
+    if (operation === "authentication") {
+      throw new AuthenticationError(message, context);
+    }
+    if (operation === "update") {
+      throw new UpdateError(message, context, false);
+    }
+    throw new NavigationError(message, context, false);
+  }
+
+  private assertNoBlockedNavigation(
+    page: Page,
+    operation: "navigation" | "authentication" | "update"
+  ): void {
+    const blockedUrl =
+      consumeBlockedTopLevelNavigation(page) ??
+      consumeBlockedContextNavigation(page.context());
+    if (blockedUrl) {
+      this.assertTrustedUrl(blockedUrl, operation);
+    }
+  }
+
+  private async assertLoginControlOwnedByForm(
+    form: Locator,
+    control: Locator,
+    label: string
+  ): Promise<void> {
+    const formHandle = await form.evaluateHandle(formElement => formElement);
+
+    try {
+      const isOwned = await control.evaluate(
+        (controlElement, formElement) =>
+          (controlElement as HTMLInputElement | HTMLButtonElement).form ===
+          formElement,
+        formHandle
+      );
+      if (isOwned) return;
+
+      throw new AuthenticationError(
+        `${label}의 form owner가 신뢰 로그인 폼과 일치하지 않습니다.`
+      );
+    } finally {
+      await formHandle.dispose();
+    }
+  }
+
+  private async assertTrustedLoginForm(loginForm: LoginForm): Promise<void> {
+    const { form, idInput, passwordInput, loginButton } = loginForm;
+    const formProperties = await form.evaluate(formElement => {
+      const htmlForm = formElement as HTMLFormElement;
+      return {
+        action: htmlForm.action,
+        method: htmlForm.method,
+        target: htmlForm.target,
+      };
+    });
+    const submitterProperties = await loginButton.evaluate(buttonElement => {
+      const submitter = buttonElement as HTMLButtonElement | HTMLInputElement;
+      return {
+        hasFormAction: submitter.hasAttribute("formaction"),
+        formAction: submitter.formAction,
+        hasFormMethod: submitter.hasAttribute("formmethod"),
+        formMethod: submitter.formMethod,
+        hasFormTarget: submitter.hasAttribute("formtarget"),
+        formTarget: submitter.formTarget,
+      };
+    });
+    const actionUrl = submitterProperties.hasFormAction
+      ? submitterProperties.formAction
+      : formProperties.action;
+    const method = (
+      submitterProperties.hasFormMethod
+        ? submitterProperties.formMethod
+        : formProperties.method
+    ).toLowerCase();
+    const target = (
+      submitterProperties.hasFormTarget
+        ? submitterProperties.formTarget
+        : formProperties.target
+    ).toLowerCase();
+
+    try {
+      new URL(actionUrl);
+    } catch {
+      throw new AuthenticationError("로그인 폼 action이 올바른 URL이 아닙니다.");
+    }
+
+    if (!isTrustedJobKoreaUrl(actionUrl) || !isJobKoreaLoginPath(actionUrl)) {
+      throw new AuthenticationError(
+        `신뢰할 수 없는 로그인 폼 action이 감지되었습니다: ${actionUrl}`
+      );
+    }
+
+    if (method !== "post") {
+      throw new AuthenticationError(
+        `로그인 폼의 전송 방식이 POST가 아닙니다: ${method || "unknown"}`
+      );
+    }
+
+    if (target !== "" && target !== "_self") {
+      throw new AuthenticationError(
+        `로그인 폼의 전송 target이 현재 frame이 아닙니다: ${target}`
+      );
+    }
+
+    await this.assertLoginControlOwnedByForm(form, idInput, "아이디 입력 필드");
+    await this.assertLoginControlOwnedByForm(
+      form,
+      passwordInput,
+      "비밀번호 입력 필드"
+    );
+    await this.assertLoginControlOwnedByForm(form, loginButton, "로그인 버튼");
+
+    const passwordType = await passwordInput.evaluate(
+      element => (element as HTMLInputElement).type.toLowerCase()
+    );
+    if (passwordType !== "password") {
+      throw new AuthenticationError(
+        "비밀번호 입력 필드가 password 타입이 아닙니다."
+      );
+    }
+  }
+
+  private async findEnabledLocator(
+    scope: Pick<Page, "locator"> | Pick<Locator, "locator">,
+    selectors: readonly string[]
+  ): Promise<Locator | null> {
+    for (const selector of selectors) {
+      const locators = scope.locator(`${selector}:visible`);
+      const count = await locators.count();
+      for (let index = 0; index < count; index++) {
+        const locator = locators.nth(index);
+        if (await locator.isEnabled()) {
+          return locator;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private async waitForLoginForm(
+    timeout: number,
+    operation: "navigation" | "authentication"
+  ): Promise<LoginForm> {
+    const deadline = Date.now() + timeout;
+    let rejectedAction: AuthenticationError | null = null;
+
+    while (Date.now() < deadline) {
+      this.assertNoBlockedNavigation(this.page, operation);
+      for (const selector of this.selectors.login.form) {
+        const forms = this.page.locator(`${selector}:visible`);
+        const count = await forms.count();
+
+        for (let index = 0; index < count; index++) {
+          const form = forms.nth(index);
+          const idInput = await this.findEnabledLocator(
+            form,
+            this.selectors.login.idInput
+          );
+          const passwordInput = await this.findEnabledLocator(
+            form,
+            this.selectors.login.passwordInput
+          );
+          const loginButton = await this.findEnabledLocator(
+            form,
+            this.selectors.login.loginButton
+          );
+
+          if (!idInput || !passwordInput || !loginButton) {
+            continue;
+          }
+
+          const loginForm = { form, idInput, passwordInput, loginButton };
+          try {
+            await this.assertTrustedLoginForm(loginForm);
+          } catch (error) {
+            if (error instanceof AuthenticationError) {
+              rejectedAction = error;
+              continue;
+            }
+            throw error;
+          }
+
+          this.assertNoBlockedNavigation(this.page, operation);
+          Logger.info("동일한 신뢰 로그인 폼에서 자격증명 필드를 확인했습니다.");
+          return loginForm;
+        }
+      }
+
+      await this.page.waitForTimeout(100);
+    }
+
+    if (rejectedAction) {
+      throw rejectedAction;
+    }
+    throw new Error(
+      "동일한 로그인 폼에서 아이디, 비밀번호, 로그인 버튼을 찾지 못했습니다."
+    );
+  }
+
+  private async captureFailureArtifacts(
+    prefix: "navigate" | "login" | "update",
+    page: Page,
+    includeHtml: boolean = false
+  ): Promise<void> {
+    if (!this.diagnosticsConfig.captureFailureArtifacts) {
+      Logger.debug(`실패 진단 파일 저장 생략: ${prefix}`);
+      return;
+    }
+
+    try {
+      const diagnosticsDirectory = path.join(process.cwd(), "diagnostics");
+      await mkdir(diagnosticsDirectory, { recursive: true, mode: 0o700 });
+      await chmod(diagnosticsDirectory, 0o700);
+
+      const timestamp = Date.now();
+      const screenshotPath = path.join(
+        diagnosticsDirectory,
+        `error-${prefix}-${timestamp}.png`
+      );
+      const tasks: Promise<unknown>[] = [
+        page
+          .screenshot({ path: screenshotPath, fullPage: true })
+          .then(() => chmod(screenshotPath, 0o600)),
+      ];
+      const labels = [`스크린샷: ${screenshotPath}`];
+
+      if (includeHtml) {
+        const htmlPath = path.join(
+          diagnosticsDirectory,
+          `error-${prefix}-${timestamp}.html`
+        );
+        tasks.push(
+          page.content().then(html =>
+            writeFile(htmlPath, html, {
+              encoding: "utf-8",
+              mode: 0o600,
+            })
+          )
+        );
+        labels.push(`HTML: ${htmlPath}`);
+      }
+
+      const results = await Promise.allSettled(tasks);
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          Logger.warning(`실패 진단 파일 저장 완료 (${labels[index]})`);
+        } else {
+          Logger.warning(
+            `실패 진단 파일 저장 실패 (${labels[index]}): ${result.reason}`
+          );
+        }
+      });
+    } catch (error) {
+      Logger.warning("실패 진단 파일 준비 중 오류가 발생했습니다.", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async waitForClickableLocator(
+    page: Page,
+    selectors: readonly string[],
+    timeout: number
+  ): Promise<Locator> {
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      if (page.isClosed()) {
+        throw new Error(
+          "페이지가 닫혀 클릭 가능한 셀렉터를 찾을 수 없습니다."
+        );
+      }
+
+      for (const selector of selectors) {
+        try {
+          const visibleLocators = page.locator(`${selector}:visible`);
+          const count = await visibleLocators.count();
+          for (let index = 0; index < count; index++) {
+            const locator = visibleLocators.nth(index);
+            if (await locator.isEnabled()) {
+              Logger.info(`클릭 가능한 셀렉터 성공: ${selector}`);
+              return locator;
+            }
+          }
+        } catch (error) {
+          if (
+            page.isClosed() ||
+            (error instanceof Error && /(?:closed|closing)/i.test(error.message))
+          ) {
+            throw error;
+          }
+          Logger.debug(`클릭 가능한 셀렉터 확인 실패: ${selector}`);
+        }
+      }
+
+      await page.waitForTimeout(100);
+    }
+
+    throw new Error(
+      `클릭 가능한 셀렉터를 찾지 못했습니다: ${selectors.join(", ")}`
+    );
+  }
 
   private shouldSkipNavigationArtifacts(error: Error): boolean {
     return (
@@ -31,15 +368,16 @@ export class JobKoreaService {
     const timeout = options.timeout || this.timeouts.element;
 
     if (state === "visible") {
-      await this.page.waitForSelector(selectors.join(", "), {
+      const visibleSelectors = selectors.map(selector => `${selector}:visible`);
+      await this.page.waitForSelector(visibleSelectors.join(", "), {
         state,
         timeout,
       });
 
-      for (const selector of selectors) {
-        if (await this.page.locator(selector).first().isVisible()) {
-          Logger.info(`셀렉터 성공: ${selector}`);
-          return selector;
+      for (const visibleSelector of visibleSelectors) {
+        if (await this.page.locator(visibleSelector).first().isVisible()) {
+          Logger.info(`셀렉터 성공: ${visibleSelector}`);
+          return visibleSelector;
         }
       }
 
@@ -63,12 +401,22 @@ export class JobKoreaService {
   }
 
   async navigateToLoginPage(): Promise<void> {
+    this.assertTrustedUrl(this.urls.login, "navigation");
+
     await withRetry(
       async () => {
-        const response = await this.page.goto(this.urls.login, {
-          waitUntil: "commit",
-          timeout: this.timeouts.navigation,
-        });
+        this.assertNoBlockedNavigation(this.page, "navigation");
+        let response;
+        try {
+          response = await this.page.goto(this.urls.login, {
+            waitUntil: "commit",
+            timeout: this.timeouts.navigation,
+          });
+        } catch (error) {
+          this.assertNoBlockedNavigation(this.page, "navigation");
+          throw error;
+        }
+        this.assertNoBlockedNavigation(this.page, "navigation");
 
         Logger.info(
           "로그인 페이지 최초 응답 수신",
@@ -81,6 +429,14 @@ export class JobKoreaService {
           },
           "navigation"
         );
+
+        this.assertTrustedUrl(this.page.url(), "navigation");
+        if (response && !response.ok()) {
+          throw new NavigationError(
+            `로그인 페이지가 HTTP ${response.status()}로 응답했습니다.`,
+            { currentUrl: this.page.url(), status: response.status() }
+          );
+        }
 
         try {
           await this.page.waitForLoadState("domcontentloaded", {
@@ -97,10 +453,12 @@ export class JobKoreaService {
           );
         }
 
-        await this.waitForAnySelector(this.selectors.login.idInput, {
-          state: "visible",
-          timeout: this.timeouts.navigation,
-        });
+        this.assertNoBlockedNavigation(this.page, "navigation");
+        await this.waitForLoginForm(
+          this.timeouts.navigation,
+          "navigation"
+        );
+        this.assertNoBlockedNavigation(this.page, "navigation");
 
         Logger.success(
           "로그인 페이지로 성공적으로 이동 및 확인 완료",
@@ -111,12 +469,9 @@ export class JobKoreaService {
       {
         maxRetries: this.retryConfig.maxOperationRetries,
         operation: "로그인 페이지 이동",
+        shouldRetry: isRetryableJobKoreaError,
       }
     ).catch(async (originalError: Error) => {
-      const timestamp = Date.now();
-      const screenshotPath = `error-navigate-${timestamp}.png`;
-      const htmlPath = `error-navigate-${timestamp}.html`;
-
       if (this.shouldSkipNavigationArtifacts(originalError)) {
         Logger.warning(
           "로그인 페이지 응답 미수신 상태라 스크린샷/HTML 저장을 생략합니다.",
@@ -127,29 +482,12 @@ export class JobKoreaService {
           },
           "navigation"
         );
-
-        throw new NavigationError(
-          `로그인 페이지로 이동하는데 실패했습니다. (${this.retryConfig.maxOperationRetries}번 재시도): ${originalError.message}`,
-          {
-            requestedUrl: this.urls.login,
-            currentUrl: this.page.url(),
-          }
-        );
+      } else {
+        await this.captureFailureArtifacts("navigate", this.page, true);
       }
 
-      const results = await Promise.allSettled([
-        this.page.screenshot({ path: screenshotPath, fullPage: true }),
-        this.page.content().then((html) => writeFile(htmlPath, html, "utf-8")),
-      ]);
-
-      for (const [i, result] of results.entries()) {
-        const label = i === 0 ? "스크린샷" : "HTML";
-        const path = i === 0 ? screenshotPath : htmlPath;
-        if (result.status === "fulfilled") {
-          Logger.error(`로그인 페이지 이동 실패. ${label} 저장: ${path}`);
-        } else {
-          Logger.warning(`${label} 저장 실패: ${result.reason}`);
-        }
+      if (!isRetryableJobKoreaError(originalError)) {
+        throw originalError;
       }
 
       throw new NavigationError(
@@ -162,91 +500,183 @@ export class JobKoreaService {
     });
   }
 
-  async login(id: string, password: string): Promise<void> {
-    await withRetry(
-      async () => {
-        const idSelector = await this.waitForAnySelector(this.selectors.login.idInput, {
-          state: "visible",
-        });
-        await this.page.fill(idSelector, id);
+  async login(id: string, password: string): Promise<Page | null> {
+    let submissionAttempted = false;
+    try {
+      let loginForm: LoginForm | undefined;
 
-        const passwordSelector = await this.waitForAnySelector(this.selectors.login.passwordInput, {
-          state: "visible",
-        });
-        await this.page.fill(passwordSelector, password);
+      // DOM 준비 과정만 재시도하고 자격증명 제출은 정확히 한 번만 수행한다.
+      await withRetry(
+        async () => {
+          this.assertNoBlockedNavigation(this.page, "authentication");
+          this.assertTrustedUrl(this.page.url(), "authentication");
+          loginForm = await this.waitForLoginForm(
+            this.timeouts.element,
+            "authentication"
+          );
+          this.assertNoBlockedNavigation(this.page, "authentication");
+          await this.assertTrustedLoginForm(loginForm);
+          this.assertTrustedUrl(this.page.url(), "authentication");
+          armCredentialEgressGuard(this.page.context());
+          await loginForm.idInput.fill(id);
 
-        const loginButtonSelector = await this.waitForAnySelector(this.selectors.login.loginButton, {
-          state: "visible",
-        });
+          this.assertNoBlockedNavigation(this.page, "authentication");
+          await this.assertTrustedLoginForm(loginForm);
+          this.assertTrustedUrl(this.page.url(), "authentication");
+          await loginForm.passwordInput.fill(password);
 
-        await this.page.click(loginButtonSelector);
+          this.assertNoBlockedNavigation(this.page, "authentication");
+          await this.assertTrustedLoginForm(loginForm);
+          this.assertTrustedUrl(this.page.url(), "authentication");
+          await loginForm.loginButton.click({ trial: true });
+          this.assertNoBlockedNavigation(this.page, "authentication");
+        },
+        {
+          maxRetries: this.retryConfig.maxOperationRetries,
+          operation: "로그인 폼 준비",
+          shouldRetry: error => !(error instanceof AuthenticationError),
+        }
+      );
 
-        // 로그인 페이지에서 벗어났는지 URL 검증으로 성공 판정
-        await this.page.waitForURL(url => !url.pathname.includes("/Login/"), {
-          timeout: this.timeouts.navigation,
-        });
-
-        Logger.success("로그인 성공 및 페이지 전환 확인 완료");
-      },
-      {
-        maxRetries: this.retryConfig.maxOperationRetries,
-        operation: "로그인",
+      if (!loginForm) {
+        throw new NavigationError("로그인 폼을 찾지 못했습니다.");
       }
-    ).catch(async (originalError: Error) => {
-      const screenshotPath = `error-login-${Date.now()}.png`;
 
-      const [screenshotResult] = await Promise.allSettled([
-        this.page.screenshot({ path: screenshotPath, fullPage: true }),
+      this.assertNoBlockedNavigation(this.page, "authentication");
+      await this.assertTrustedLoginForm(loginForm);
+      this.assertTrustedUrl(this.page.url(), "authentication");
+      const popupPromise = this.page
+        .waitForEvent("popup", { timeout: this.timeouts.popup })
+        .catch(() => null);
+      const navigationPromise = this.page.waitForURL(
+        url => !isJobKoreaLoginPath(url),
+        { timeout: this.timeouts.navigation }
+      );
+
+      submissionAttempted = true;
+      await Promise.all([
+        navigationPromise,
+        loginForm.loginButton.click(),
       ]);
 
-      if (screenshotResult.status === "fulfilled") {
-        Logger.error(`로그인 실패. 스크린샷 저장: ${screenshotPath}`);
-      } else {
-        Logger.error(`로그인 실패. 스크린샷 저장 실패: ${screenshotResult.reason}`);
+      this.assertNoBlockedNavigation(this.page, "authentication");
+      this.assertTrustedUrl(this.page.url(), "authentication");
+      const popup = await popupPromise;
+      this.assertNoBlockedNavigation(this.page, "authentication");
+      this.assertTrustedUrl(this.page.url(), "authentication");
+      if (popup) {
+        this.assertNoBlockedNavigation(popup, "authentication");
       }
-
-      throw new AuthenticationError(`로그인 실패: ${originalError.message}`);
-    });
+      disarmCredentialEgressGuard(this.page.context());
+      Logger.success("로그인 성공 및 페이지 전환 확인 완료");
+      return popup;
+    } catch (error) {
+      await this.captureFailureArtifacts("login", this.page);
+      this.assertNoBlockedNavigation(this.page, "authentication");
+      if (error instanceof AuthenticationError) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      if (submissionAttempted) {
+        // 실제 click 이후에는 제출 여부를 확정할 수 없으므로 계정 잠금을 피하기 위해
+        // navigation timeout이나 browser 오류도 자동 재제출하지 않는다.
+        throw new AuthenticationError(`로그인 실패: ${message}`);
+      }
+      throw error instanceof NavigationError
+        ? error
+        : new NavigationError(`로그인 폼 준비 실패: ${message}`);
+    }
   }
 
-  async handleLoginPopup(): Promise<void> {
-    try {
-      Logger.info("로그인 팝업 처리 중...");
-      const [popup] = await Promise.all([
-        this.page.waitForEvent("popup", { timeout: this.timeouts.popup }),
-      ]);
+  async handleLoginPopup(popup: Page | null): Promise<void> {
+    if (!popup) {
+      Logger.info("처리할 로그인 팝업이 없습니다.");
+      return;
+    }
 
-      if (popup) {
-        await popup.waitForSelector('a[href*="나중에 변경"]', {
-          timeout: this.timeouts.element,
-        });
-        const [dialog] = await Promise.all([
-          popup.waitForEvent("dialog", { timeout: this.timeouts.popup }),
-          popup.click('a[href*="나중에 변경"]'),
-        ]);
-        await dialog.dismiss();
-        Logger.success("팝업 처리 완료");
+    try {
+      this.assertNoBlockedNavigation(popup, "authentication");
+      await popup
+        .waitForLoadState("domcontentloaded", {
+          timeout: this.timeouts.navigation,
+        })
+        .catch(() => undefined);
+      this.assertNoBlockedNavigation(popup, "authentication");
+      this.assertTrustedUrl(popup.url(), "authentication");
+      Logger.info("로그인 팝업 처리 중...");
+      await popup.waitForSelector('a[href*="나중에 변경"]', {
+        timeout: this.timeouts.element,
+      });
+      const [dialog] = await Promise.all([
+        popup.waitForEvent("dialog", { timeout: this.timeouts.popup }),
+        popup.click('a[href*="나중에 변경"]'),
+      ]);
+      await dialog.dismiss();
+      this.assertNoBlockedNavigation(popup, "authentication");
+      Logger.success("팝업 처리 완료");
+    } catch (error) {
+      this.assertNoBlockedNavigation(popup, "authentication");
+      if (error instanceof AuthenticationError) {
+        throw error;
       }
-    } catch {
-      Logger.warning("팝업이 나타나지 않았거나 처리할 수 없습니다.");
+      Logger.warning("로그인 팝업을 처리할 수 없습니다.");
+    } finally {
+      if (!popup.isClosed()) {
+        await popup.close().catch(error =>
+          Logger.warning("로그인 팝업 종료 실패", {
+            reason: error instanceof Error ? error.message : String(error),
+          })
+        );
+      }
     }
   }
 
   async navigateToMypage(): Promise<void> {
+    this.assertTrustedUrl(this.urls.mypage, "navigation");
+
     await withRetry(
       async () => {
-        await this.page.goto(this.urls.mypage, {
-          waitUntil: "networkidle",
-          timeout: this.timeouts.navigation,
+        this.assertNoBlockedNavigation(this.page, "navigation");
+        let response;
+        try {
+          response = await this.page.goto(this.urls.mypage, {
+            waitUntil: "domcontentloaded",
+            timeout: this.timeouts.navigation,
+          });
+        } catch (error) {
+          this.assertNoBlockedNavigation(this.page, "navigation");
+          throw error;
+        }
+        this.assertNoBlockedNavigation(this.page, "navigation");
+
+        this.assertTrustedUrl(this.page.url(), "navigation");
+        if (response && !response.ok()) {
+          throw new NavigationError(
+            `마이페이지가 HTTP ${response.status()}로 응답했습니다.`,
+            { currentUrl: this.page.url(), status: response.status() }
+          );
+        }
+        if (isJobKoreaLoginPath(this.page.url())) {
+          throw new AuthenticationError("마이페이지 접근 중 로그인 페이지로 되돌아갔습니다.");
+        }
+
+        await this.waitForAnySelector(this.selectors.mypage.statusLink, {
+          state: "visible",
+          timeout: this.timeouts.element,
         });
+        this.assertNoBlockedNavigation(this.page, "navigation");
         Logger.success("마이페이지로 이동 완료");
       },
       {
         maxRetries: this.retryConfig.maxOperationRetries,
         operation: "마이페이지 이동",
+        shouldRetry: isRetryableJobKoreaError,
       }
-    ).catch(() => {
-      throw new NavigationError("마이페이지 이동 실패");
+    ).catch((error: Error) => {
+      if (!isRetryableJobKoreaError(error)) {
+        throw error;
+      }
+      throw new NavigationError(`마이페이지 이동 실패: ${error.message}`);
     });
   }
 
@@ -254,10 +684,15 @@ export class JobKoreaService {
     await withRetry(
       async () => {
         let resumePopup: Page | null = null;
+        let updateSubmitted = false;
         try {
-          const statusLinkSelector = await this.waitForAnySelector(this.selectors.mypage.statusLink, {
-            timeout: this.timeouts.element,
-          });
+          this.assertNoBlockedNavigation(this.page, "update");
+          this.assertTrustedUrl(this.page.url(), "update");
+          const statusLinkSelector = await this.waitForAnySelector(
+            this.selectors.mypage.statusLink,
+            { timeout: this.timeouts.element }
+          );
+          this.assertNoBlockedNavigation(this.page, "update");
 
           const adModal = await this.page.$(".ab-iam-root");
           if (adModal) {
@@ -269,44 +704,45 @@ export class JobKoreaService {
             this.page.waitForEvent("popup", { timeout: this.timeouts.popup }),
             this.page.click(statusLinkSelector),
           ]);
+          this.assertNoBlockedNavigation(this.page, "update");
           resumePopup = popup;
 
           if (!resumePopup) {
             throw new UpdateError("이력서 팝업창을 열 수 없습니다.");
           }
 
-          await resumePopup.waitForLoadState();
+          this.assertNoBlockedNavigation(resumePopup, "update");
+          await resumePopup.waitForLoadState("domcontentloaded", {
+            timeout: this.timeouts.navigation,
+          });
+          this.assertNoBlockedNavigation(resumePopup, "update");
+          this.assertTrustedUrl(resumePopup.url(), "update");
 
-          const updateButtonSelector = await resumePopup.evaluate(
-            (selectors) => {
-              for (const selector of selectors) {
-                try {
-                  const element = document.querySelector(selector);
-                  if (element) {
-                    console.log(`업데이트 버튼 셀렉터 성공: ${selector}`);
-                    return selector;
-                  }
-                } catch {
-                  console.log(`업데이트 버튼 셀렉터 실패: ${selector}`);
-                  continue;
-                }
-              }
-              throw new Error(`모든 업데이트 버튼 셀렉터 실패: ${selectors.join(", ")}`);
-            },
-            [...this.selectors.mypage.updateButton]
+          const updateButton = await this.waitForClickableLocator(
+            resumePopup,
+            this.selectors.mypage.updateButton,
+            this.timeouts.element
           );
 
-          const dialogPromise = resumePopup.waitForEvent("dialog", {
-            timeout: this.timeouts.element,
-          });
-
-          await resumePopup.click(updateButtonSelector);
-
-          const dialog = await dialogPromise;
+          this.assertNoBlockedNavigation(resumePopup, "update");
+          this.assertTrustedUrl(resumePopup.url(), "update");
+          await updateButton.click({ trial: true });
+          this.assertNoBlockedNavigation(resumePopup, "update");
+          updateSubmitted = true;
+          const [dialog] = await Promise.all([
+            resumePopup.waitForEvent("dialog", {
+              timeout: this.timeouts.element,
+            }),
+            updateButton.click(),
+          ]);
+          this.assertNoBlockedNavigation(resumePopup, "update");
+          this.assertTrustedUrl(resumePopup.url(), "update");
 
           const successPatterns = configManager.getUpdateConfig().successPatterns;
           const dialogMessage = dialog.message();
-          const isSuccess = successPatterns.some(pattern => dialogMessage.includes(pattern));
+          const isSuccess = successPatterns.some(pattern =>
+            dialogMessage.includes(pattern)
+          );
 
           if (isSuccess) {
             Logger.info(`성공 다이얼로그 확인: "${dialogMessage}"`);
@@ -316,19 +752,25 @@ export class JobKoreaService {
             const errorMessage = `예상치 못한 다이얼로그 발생: ${dialogMessage}`;
             Logger.error(errorMessage);
             await dialog.dismiss();
-            throw new UpdateError(errorMessage);
+            throw new UpdateError(
+              errorMessage,
+              { dialogMessage, updateSubmitted },
+              false
+            );
           }
-        } catch (error) {
-          const screenshotPath = `error-update-${Date.now()}.png`;
-
+        } catch (caughtError) {
+          let error = caughtError;
           try {
-            const pageToScreenshot =
-              resumePopup && !resumePopup.isClosed() ? resumePopup : this.page;
-            await pageToScreenshot.screenshot({ path: screenshotPath, fullPage: true });
-            Logger.error(`업데이트 실패. 스크린샷 저장: ${screenshotPath}`);
-          } catch (screenshotError) {
-            Logger.error("스크린샷 저장 실패", screenshotError as Error);
+            this.assertNoBlockedNavigation(this.page, "update");
+            if (resumePopup) {
+              this.assertNoBlockedNavigation(resumePopup, "update");
+            }
+          } catch (blockedNavigationError) {
+            error = blockedNavigationError;
           }
+          const pageToCapture =
+            resumePopup && !resumePopup.isClosed() ? resumePopup : this.page;
+          await this.captureFailureArtifacts("update", pageToCapture);
 
           if (
             error instanceof UpdateError ||
@@ -340,13 +782,24 @@ export class JobKoreaService {
           throw new UpdateError(
             `경력 정보 업데이트 실패: ${
               error instanceof Error ? error.message : String(error)
-            }`
+            }`,
+            { updateSubmitted },
+            !updateSubmitted
           );
+        } finally {
+          if (resumePopup && !resumePopup.isClosed()) {
+            await resumePopup.close().catch(error =>
+              Logger.warning("이력서 팝업 종료 실패", {
+                reason: error instanceof Error ? error.message : String(error),
+              })
+            );
+          }
         }
       },
       {
         maxRetries: this.retryConfig.maxOperationRetries,
         operation: "경력 정보 업데이트",
+        shouldRetry: isRetryableJobKoreaError,
       }
     );
   }

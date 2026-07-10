@@ -17,10 +17,12 @@ concurrency:
 jobs:
   rerun-on-probe-failure:
     if: >
-      github.event.workflow_run.event == 'schedule' &&
+      (github.event.workflow_run.event == 'schedule' ||
+      github.event.workflow_run.event == 'workflow_dispatch') &&
       github.event.workflow_run.conclusion == 'failure' &&
-      github.event.workflow_run.run_attempt < 4
+      github.event.workflow_run.run_attempt <= 4
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Check probe failure
@@ -32,9 +34,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          failed_probe_notifications="$(gh run view "${RUN_ID}" --repo "${GH_REPO}" --json jobs --jq '
+          failed_probe_notifications="$(timeout 30s gh run view "${RUN_ID}" --repo "${GH_REPO}" --json jobs --jq '
             [.jobs[]
-              | select(.name == "update-resume")
+              | select(.name == "update-resume-probe")
               | .steps[]
               | select(.name == "Notify JobKorea probe failure" and .conclusion == "failure")
             ] | length
@@ -47,7 +49,9 @@ jobs:
           fi
 
       - name: Rerun failed update job
-        if: steps.probe-failure.outputs.should_rerun == 'true'
+        if: >
+          steps.probe-failure.outputs.should_rerun == 'true' &&
+          github.event.workflow_run.run_attempt < 4
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -76,7 +80,35 @@ jobs:
             sleep "${delay_seconds}"
           fi
 
-          gh run rerun "${RUN_ID}" --repo "${GH_REPO}" --failed
+          timeout 30s gh run rerun "${RUN_ID}" --repo "${GH_REPO}" --failed
+
+      - name: Notify exhausted dispatch fallback
+        if: >
+          steps.probe-failure.outputs.should_rerun == 'true' &&
+          github.event.workflow_run.run_attempt >= 4
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          set -euo pipefail
+
+          MESSAGE="$(cat <<EOF
+          ❌ 이력서 업데이트 재시도 생성 실패
+          이유: JobKorea probe 실패 후 다음 workflow run을 생성하지 못했습니다.
+          조치: 자동 보조 재실행도 모두 소진되었습니다.
+          확인: ${RUN_URL}
+          시간: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S KST')
+          EOF
+          )"
+
+          curl --silent --show-error --fail \
+            --connect-timeout 5 \
+            --max-time 15 \
+            --output /dev/null \
+            --request POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${MESSAGE}" || echo "Telegram fallback exhaustion notification failed"
 
       - name: Skip non-probe failure
         if: steps.probe-failure.outputs.should_rerun != 'true'

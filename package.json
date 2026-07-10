@@ -1,13 +1,16 @@
 {
   "name": "jobkorea-updater-bot",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "description": "Secure Playwright automation for refreshing a JobKorea resume",
+  "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
+    "prestart": "pnpm build",
     "start": "node dist/index.js",
     "lint": "tsc --noEmit",
-    "test": "echo \"No tests configured\""
+    "test": "node --test test/*.test.js",
+    "test:browser": "node test/browser-launch.smoke.js"
   },
   "keywords": [],
   "author": "",
