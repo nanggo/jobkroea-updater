@@ -9,6 +9,7 @@ export interface AppConfig {
   // CSS 셀렉터 설정 (fallback 포함)
   selectors: {
     login: {
+      form: readonly string[];
       idInput: readonly string[];
       passwordInput: readonly string[];
       loginButton: readonly string[];
@@ -24,6 +25,8 @@ export interface AppConfig {
     navigation: number;
     element: number;
     popup: number;
+    telegram: number;
+    telegramOverall: number;
   };
 
   // 재시도 설정
@@ -67,6 +70,10 @@ export interface AppConfig {
   security: {
     maskSensitiveInfo: boolean;
   };
+
+  diagnostics: {
+    captureFailureArtifacts: boolean;
+  };
 }
 
 export const defaultConfig: AppConfig = {
@@ -77,14 +84,27 @@ export const defaultConfig: AppConfig = {
 
   selectors: {
     login: {
-      idInput: [".input-id", "#user_id", 'input[name="user_id"]', 'input[type="text"]'],
-      passwordInput: [
-        ".input-password",
-        "#user_pwd",
-        'input[name="user_pwd"]',
-        'input[type="password"]',
+      form: ["form"],
+      idInput: [
+        "input.input-id",
+        "input#user_id",
+        'input[name="user_id"]',
       ],
-      loginButton: [".login-button", "#login_btn", 'button[type="submit"]', ".btn-login"],
+      passwordInput: [
+        "input.input-password",
+        "input#user_pwd",
+        'input[name="user_pwd"]',
+      ],
+      loginButton: [
+        "button.login-button",
+        "button#login_btn",
+        "button.btn-login",
+        'button[type="submit"]',
+        "input.login-button",
+        "input#login_btn",
+        "input.btn-login",
+        'input[type="submit"]',
+      ],
     },
     mypage: {
       statusLink: [".status a", ".my-status a", 'a[href*="status"]', ".resume-status a"],
@@ -101,6 +121,8 @@ export const defaultConfig: AppConfig = {
     navigation: 20000,
     element: 15000,
     popup: 10000,
+    telegram: 10000,
+    telegramOverall: 60000,
   },
 
   retry: {
@@ -118,12 +140,9 @@ export const defaultConfig: AppConfig = {
       height: 720,
     },
     args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-accelerated-2d-canvas",
       "--no-first-run",
-      "--no-zygote",
       "--disable-gpu",
       "--disable-background-timer-throttling",
       "--disable-backgrounding-occluded-windows",
@@ -145,11 +164,19 @@ export const defaultConfig: AppConfig = {
   },
 
   update: {
-    successPatterns: ["업데이트 되었습니다", "업데이트되었습니다", "수정되었습니다"],
+    successPatterns: [
+      "이력서 수정일이 오늘날짜로 업데이트 되었습니다",
+      "이력서 수정일이 오늘날짜로 업데이트되었습니다",
+      "이력서 수정일이 오늘 날짜로 업데이트되었습니다",
+    ],
   },
 
   security: {
     maskSensitiveInfo: true,
+  },
+
+  diagnostics: {
+    captureFailureArtifacts: false,
   },
 };
 
@@ -161,22 +188,40 @@ function loadEnvironmentOverrides(baseConfig: AppConfig): AppConfig {
     retry: { ...baseConfig.retry },
     browser: { ...baseConfig.browser },
     logging: { ...baseConfig.logging },
+    diagnostics: { ...baseConfig.diagnostics },
   };
 
-  const readPositiveInt = (name: string): number | undefined => {
-    const value = process.env[name];
-    if (!value) return undefined;
-
-    const parsed = parseInt(value, 10);
-    return !isNaN(parsed) && parsed > 0 ? parsed : undefined;
-  };
-
-  const readPositiveFloat = (name: string): number | undefined => {
+  const readPositiveInt = (
+    name: string,
+    maximum: number
+  ): number | undefined => {
     const value = process.env[name];
     if (!value) return undefined;
 
     const parsed = Number(value);
-    return !isNaN(parsed) && parsed > 0 ? parsed : undefined;
+    return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= maximum
+      ? parsed
+      : undefined;
+  };
+
+  const readPositiveFloat = (
+    name: string,
+    maximum: number
+  ): number | undefined => {
+    const value = process.env[name];
+    if (!value) return undefined;
+
+    const parsed = Number(value);
+    return !isNaN(parsed) && parsed > 0 && parsed <= maximum
+      ? parsed
+      : undefined;
+  };
+
+  const readBoolean = (name: string): boolean | undefined => {
+    const value = process.env[name]?.toLowerCase();
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return undefined;
   };
 
   if (process.env.JOBKOREA_LOGIN_URL) {
@@ -187,60 +232,82 @@ function loadEnvironmentOverrides(baseConfig: AppConfig): AppConfig {
     config.urls.mypage = process.env.JOBKOREA_MYPAGE_URL;
   }
 
-  if (process.env.BROWSER_HEADLESS) {
-    config.browser.headless = process.env.BROWSER_HEADLESS === "true";
+  const browserHeadless = readBoolean("BROWSER_HEADLESS");
+  if (browserHeadless !== undefined) {
+    config.browser.headless = browserHeadless;
   }
 
-  const navigationTimeout = readPositiveInt("NAVIGATION_TIMEOUT_MS");
+  const navigationTimeout = readPositiveInt("NAVIGATION_TIMEOUT_MS", 120000);
   if (navigationTimeout) {
     config.timeouts.navigation = navigationTimeout;
   }
 
-  const elementTimeout = readPositiveInt("ELEMENT_TIMEOUT_MS");
+  const elementTimeout = readPositiveInt("ELEMENT_TIMEOUT_MS", 60000);
   if (elementTimeout) {
     config.timeouts.element = elementTimeout;
   }
 
-  const popupTimeout = readPositiveInt("POPUP_TIMEOUT_MS");
+  const popupTimeout = readPositiveInt("POPUP_TIMEOUT_MS", 60000);
   if (popupTimeout) {
     config.timeouts.popup = popupTimeout;
   }
 
+  const telegramTimeout = readPositiveInt("TELEGRAM_TIMEOUT_MS", 60000);
+  if (telegramTimeout) {
+    config.timeouts.telegram = telegramTimeout;
+  }
+
+  const telegramOverallTimeout = readPositiveInt(
+    "TELEGRAM_OVERALL_TIMEOUT_MS",
+    300000
+  );
+  if (telegramOverallTimeout) {
+    config.timeouts.telegramOverall = telegramOverallTimeout;
+  }
+
   if (process.env.MAX_RETRIES) {
-    const maxRetries = readPositiveInt("MAX_RETRIES");
+    const maxRetries = readPositiveInt("MAX_RETRIES", 10);
     if (maxRetries) {
       config.retry.maxOperationRetries = maxRetries;
       config.retry.maxProcessRetries = maxRetries;
     }
   }
 
-  const maxOperationRetries = readPositiveInt("MAX_OPERATION_RETRIES");
+  const maxOperationRetries = readPositiveInt("MAX_OPERATION_RETRIES", 10);
   if (maxOperationRetries) {
     config.retry.maxOperationRetries = maxOperationRetries;
   }
 
-  const maxProcessRetries = readPositiveInt("MAX_PROCESS_RETRIES");
+  const maxProcessRetries = readPositiveInt("MAX_PROCESS_RETRIES", 10);
   if (maxProcessRetries) {
     config.retry.maxProcessRetries = maxProcessRetries;
   }
 
-  const retryBaseDelay = readPositiveInt("RETRY_BASE_DELAY_MS");
+  const retryBaseDelay = readPositiveInt("RETRY_BASE_DELAY_MS", 300000);
   if (retryBaseDelay) {
     config.retry.baseDelay = retryBaseDelay;
   }
 
-  const retryMaxDelay = readPositiveInt("RETRY_MAX_DELAY_MS");
+  const retryMaxDelay = readPositiveInt("RETRY_MAX_DELAY_MS", 300000);
   if (retryMaxDelay) {
     config.retry.maxDelay = retryMaxDelay;
   }
 
-  const retryBackoffMultiplier = readPositiveFloat("RETRY_BACKOFF_MULTIPLIER");
+  const retryBackoffMultiplier = readPositiveFloat(
+    "RETRY_BACKOFF_MULTIPLIER",
+    10
+  );
   if (retryBackoffMultiplier) {
     config.retry.backoffMultiplier = retryBackoffMultiplier;
   }
 
   if (process.env.LOG_LEVEL && ["error", "warn", "info", "debug"].includes(process.env.LOG_LEVEL)) {
     config.logging.logLevel = process.env.LOG_LEVEL as "error" | "warn" | "info" | "debug";
+  }
+
+  const captureFailureArtifacts = readBoolean("CAPTURE_FAILURE_ARTIFACTS");
+  if (captureFailureArtifacts !== undefined) {
+    config.diagnostics.captureFailureArtifacts = captureFailureArtifacts;
   }
 
   return config;
@@ -283,6 +350,10 @@ export const configManager = {
 
   getSecurityConfig() {
     return appConfig.security;
+  },
+
+  getDiagnosticsConfig() {
+    return appConfig.diagnostics;
   },
 };
 

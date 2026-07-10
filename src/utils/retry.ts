@@ -8,6 +8,7 @@ export interface RetryOptions {
   backoffMultiplier?: number;
   operation?: string;
   shouldRetry?: (error: Error, attempt: number) => boolean;
+  maxElapsedMs?: number;
 }
 
 function getRetryAfterMs(error: Error): number | undefined {
@@ -16,6 +17,22 @@ function getRetryAfterMs(error: Error): number | undefined {
     return retryAfterMs;
   }
   return undefined;
+}
+
+export function calculateRetryDelay(
+  error: Error,
+  attempt: number,
+  baseDelay: number,
+  maxDelay: number,
+  backoffMultiplier: number
+): number {
+  const exponentialDelay = Math.min(
+    baseDelay * Math.pow(backoffMultiplier, Math.max(0, attempt - 1)),
+    maxDelay
+  );
+  const requestedDelay = getRetryAfterMs(error) ?? exponentialDelay;
+
+  return Math.min(Math.max(0, requestedDelay), maxDelay);
 }
 
 export async function withRetry<T>(
@@ -30,11 +47,19 @@ export async function withRetry<T>(
     backoffMultiplier = retryConfig.backoffMultiplier,
     operation = "작업",
     shouldRetry = () => true,
+    maxElapsedMs,
   } = options;
 
   let lastError: Error = new Error("No attempts made");
+  const deadline =
+    maxElapsedMs !== undefined ? Date.now() + maxElapsedMs : undefined;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    if (deadline !== undefined && Date.now() >= deadline) {
+      Logger.warning(`${operation} 전체 제한 시간 초과`);
+      throw lastError;
+    }
+
     try {
       Logger.info(`${operation} 시도 중... (${attempt}/${maxRetries})`);
       const result = await fn();
@@ -57,8 +82,23 @@ export async function withRetry<T>(
         throw lastError;
       }
 
-      const calculatedDelay = Math.min(baseDelay * Math.pow(backoffMultiplier, attempt - 1), maxDelay);
-      const delay = getRetryAfterMs(lastError) ?? calculatedDelay;
+      const calculatedDelay = calculateRetryDelay(
+        lastError,
+        attempt,
+        baseDelay,
+        maxDelay,
+        backoffMultiplier
+      );
+      const remainingMs =
+        deadline !== undefined ? Math.max(0, deadline - Date.now()) : undefined;
+      if (remainingMs !== undefined && remainingMs === 0) {
+        Logger.warning(`${operation} 전체 제한 시간 초과`);
+        throw lastError;
+      }
+      const delay =
+        remainingMs !== undefined
+          ? Math.min(calculatedDelay, remainingMs)
+          : calculatedDelay;
       Logger.warning(
         `${operation} 실패 (${attempt}/${maxRetries}). ${delay}ms 후 재시도... 오류: ${lastError.message}`
       );
@@ -78,6 +118,9 @@ export async function withBrowserRestart<T>(
   const retryConfig = configManager.getRetryConfig();
   const {
     maxRetries = retryConfig.maxProcessRetries,
+    baseDelay = retryConfig.baseDelay,
+    maxDelay = retryConfig.maxDelay,
+    backoffMultiplier = retryConfig.backoffMultiplier,
     operation = "전체 프로세스",
     shouldRetry = () => true,
   } = options;
@@ -117,7 +160,14 @@ export async function withBrowserRestart<T>(
         Logger.error("브라우저 재시작 실패", restartError as Error);
       }
 
-      await new Promise(resolve => setTimeout(resolve, retryConfig.baseDelay));
+      const delay = calculateRetryDelay(
+        lastError,
+        attempt,
+        baseDelay,
+        maxDelay,
+        backoffMultiplier
+      );
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
 

@@ -1,5 +1,9 @@
 import { LogLevel, JobKoreaError, OperationType } from "../types";
 import { configManager } from "../config";
+import {
+  isTrustedJobKoreaUrl,
+  isTrustedJobKoreaWebSocketUrl,
+} from "./jobkoreaUrl";
 
 interface LogEntry {
   timestamp: string;
@@ -17,6 +21,8 @@ interface LogEntry {
 }
 
 export class Logger {
+  private static readonly registeredSensitiveValues = new Set<string>();
+
   private static readonly SENSITIVE_PATTERNS = [
     { pattern: /(password|pwd|pass|secret)[\s]*[:=][\s]*["']?([^"'\s,}]+)/gi, replacement: "$1: ***" },
     { pattern: /(token|key|auth|bearer)[\s]*[:=][\s]*["']?([^"'\s,}]+)/gi, replacement: "$1: ***" },
@@ -28,17 +34,134 @@ export class Logger {
     { pattern: /(\b\d{10,}\b)/g, replacement: "***" },
   ];
 
-  private static maskSensitiveData(data: string): string {
-    const config = configManager.getSecurityConfig();
-    if (!config.maskSensitiveInfo) {
-      return data;
-    }
-
+  private static applySensitiveValueMasking(data: string): string {
     let maskedData = data;
     for (const { pattern, replacement } of this.SENSITIVE_PATTERNS) {
       maskedData = maskedData.replace(pattern, replacement);
     }
+
+    const registeredValues = [...this.registeredSensitiveValues].sort(
+      (left, right) => right.length - left.length
+    );
+    for (const value of registeredValues) {
+      const variants = new Set([value]);
+      try {
+        variants.add(encodeURIComponent(value));
+      } catch {
+        // Environment strings should be valid Unicode, but raw masking still applies.
+      }
+      for (const variant of variants) {
+        maskedData = maskedData.split(variant).join("***");
+      }
+    }
     return maskedData;
+  }
+
+  private static maskSensitiveData(data: string): string {
+    const config = configManager.getSecurityConfig();
+    return config.maskSensitiveInfo
+      ? this.applySensitiveValueMasking(data)
+      : data;
+  }
+
+  static registerSensitiveValues(values: readonly string[]): void {
+    values
+      .filter(value => value.length >= 3)
+      .forEach(value => this.registeredSensitiveValues.add(value));
+  }
+
+  private static stripUrlDetails(data: string): string {
+    return data.replace(/(?:https?|wss?):\/\/[^\s"'<>]+/gi, (rawUrl) => {
+      try {
+        const url = new URL(rawUrl);
+        const trustedJobKoreaUrl =
+          isTrustedJobKoreaUrl(url.toString()) ||
+          isTrustedJobKoreaWebSocketUrl(url.toString());
+        url.username = "";
+        url.password = "";
+        url.search = "";
+        url.hash = "";
+        return trustedJobKoreaUrl ? url.toString() : `${url.origin}/`;
+      } catch {
+        return rawUrl;
+      }
+    });
+  }
+
+  private static sanitizeLogString(data: string): string {
+    return this.maskSensitiveData(this.stripUrlDetails(data));
+  }
+
+  static redactForExternalOutput(data: string): string {
+    return this.applySensitiveValueMasking(this.stripUrlDetails(data));
+  }
+
+  private static isSensitiveContextKey(key: string): boolean {
+    const normalized = key.replace(/[-_\s]/g, "").toLowerCase();
+    const exactKeys = new Set([
+      "password",
+      "pwd",
+      "pass",
+      "secret",
+      "token",
+      "key",
+      "auth",
+      "authorization",
+      "bearer",
+      "jobkoreaid",
+      "userid",
+      "loginid",
+      "telegrambottoken",
+      "telegramchatid",
+    ]);
+
+    return (
+      exactKeys.has(normalized) ||
+      /(?:password|secret|token|apikey)$/.test(normalized)
+    );
+  }
+
+  private static sanitizeContextValue(value: unknown, seen: WeakSet<object>): unknown {
+    if (typeof value === "string") {
+      return this.sanitizeLogString(value);
+    }
+
+    if (value === null || typeof value !== "object") {
+      return value;
+    }
+
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+
+    seen.add(value);
+    try {
+      if (value instanceof URL) {
+        return this.sanitizeLogString(value.toString());
+      }
+
+      if (value instanceof Date) {
+        return value;
+      }
+
+      if (Array.isArray(value)) {
+        return value.map((item) => this.sanitizeContextValue(item, seen));
+      }
+
+      const sanitized: Record<string, unknown> = {};
+      for (const [key, nestedValue] of Object.entries(value)) {
+        sanitized[key] = this.isSensitiveContextKey(key)
+          ? "***"
+          : this.sanitizeContextValue(nestedValue, seen);
+      }
+      return sanitized;
+    } finally {
+      seen.delete(value);
+    }
+  }
+
+  private static sanitizeContext(context: Record<string, unknown>): Record<string, unknown> {
+    return this.sanitizeContextValue(context, new WeakSet<object>()) as Record<string, unknown>;
   }
 
   private static shouldLog(level: LogLevel): boolean {
@@ -62,8 +185,11 @@ export class Logger {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
-      message: loggingConfig.enableSensitiveDataMasking ? this.maskSensitiveData(message) : message,
-      context,
+      message: loggingConfig.enableSensitiveDataMasking ? this.sanitizeLogString(message) : message,
+      context:
+        context && loggingConfig.enableSensitiveDataMasking
+          ? this.sanitizeContext(context)
+          : context,
       operation,
       duration,
     };
@@ -72,12 +198,12 @@ export class Logger {
       entry.error = {
         name: error.name,
         message: loggingConfig.enableSensitiveDataMasking
-          ? this.maskSensitiveData(error.message)
+          ? this.sanitizeLogString(error.message)
           : error.message,
         code: error instanceof JobKoreaError ? error.code : undefined,
         stack:
           error.stack && loggingConfig.enableSensitiveDataMasking
-            ? this.maskSensitiveData(error.stack)
+            ? this.sanitizeLogString(error.stack)
             : error.stack,
       };
     }

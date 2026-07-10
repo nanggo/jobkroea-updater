@@ -12,6 +12,9 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   lint-and-build:
     runs-on: ubuntu-latest
@@ -20,6 +23,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -37,6 +42,9 @@ jobs:
 
       - name: Run lint
         run: pnpm lint
+
+      - name: Run tests
+        run: pnpm test
 
       - name: Run build
         run: pnpm build

@@ -1,5 +1,6 @@
 import { Config } from "../types";
 import { Logger } from "./logger";
+import { isTrustedJobKoreaUrl } from "./jobkoreaUrl";
 
 interface ValidationResult {
   isValid: boolean;
@@ -130,6 +131,27 @@ export class ConfigValidator {
       }
     }
     
+    return { isValid: errors.length === 0, errors };
+  }
+
+  static validateJobKoreaUrls(urls: {
+    login: string;
+    mypage: string;
+  }): ValidationResult {
+    const errors: string[] = [];
+
+    if (!isTrustedJobKoreaUrl(urls.login)) {
+      errors.push(
+        "JOBKOREA_LOGIN_URL은 HTTPS JobKorea 도메인이어야 합니다."
+      );
+    }
+
+    if (!isTrustedJobKoreaUrl(urls.mypage)) {
+      errors.push(
+        "JOBKOREA_MYPAGE_URL은 HTTPS JobKorea 도메인이어야 합니다."
+      );
+    }
+
     return { isValid: errors.length === 0, errors };
   }
 }

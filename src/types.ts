@@ -6,22 +6,6 @@ export interface Config {
   readonly telegramChatId: string;
 }
 
-// 런타임 타입 가드
-export function isValidConfig(config: unknown): config is Config {
-  return (
-    typeof config === "object" &&
-    config !== null &&
-    typeof (config as Config).jobkoreaId === "string" &&
-    typeof (config as Config).jobkoreaPwd === "string" &&
-    typeof (config as Config).telegramToken === "string" &&
-    typeof (config as Config).telegramChatId === "string" &&
-    (config as Config).jobkoreaId.length > 0 &&
-    (config as Config).jobkoreaPwd.length > 0 &&
-    (config as Config).telegramToken.length > 0 &&
-    (config as Config).telegramChatId.length > 0
-  );
-}
-
 // 로그 레벨 타입
 export type LogLevel = "error" | "warn" | "info" | "debug";
 
@@ -45,7 +29,8 @@ export class JobKoreaError extends Error {
   constructor(
     message: string,
     public readonly code: ErrorCode,
-    context?: Record<string, unknown>
+    context?: Record<string, unknown>,
+    public readonly retryable: boolean = true
   ) {
     super(message);
     this.name = "JobKoreaError";
@@ -64,27 +49,40 @@ export class JobKoreaError extends Error {
       code: this.code,
       timestamp: this.timestamp,
       context: this.context,
+      retryable: this.retryable,
     };
   }
 }
 
 export class AuthenticationError extends JobKoreaError {
   constructor(message: string, context?: Record<string, unknown>) {
-    super(message, ERROR_CODES.AUTH_ERROR, context);
+    super(message, ERROR_CODES.AUTH_ERROR, context, false);
     this.name = "AuthenticationError";
   }
 }
 
 export class NavigationError extends JobKoreaError {
-  constructor(message: string, context?: Record<string, unknown>) {
-    super(message, ERROR_CODES.NAVIGATION_ERROR, context);
+  constructor(
+    message: string,
+    context?: Record<string, unknown>,
+    retryable: boolean = true
+  ) {
+    super(message, ERROR_CODES.NAVIGATION_ERROR, context, retryable);
     this.name = "NavigationError";
   }
 }
 
 export class UpdateError extends JobKoreaError {
-  constructor(message: string, context?: Record<string, unknown>) {
-    super(message, ERROR_CODES.UPDATE_ERROR, context);
+  constructor(
+    message: string,
+    context?: Record<string, unknown>,
+    retryable: boolean = true
+  ) {
+    super(message, ERROR_CODES.UPDATE_ERROR, context, retryable);
     this.name = "UpdateError";
   }
+}
+
+export function isRetryableJobKoreaError(error: Error): boolean {
+  return !(error instanceof JobKoreaError) || error.retryable;
 }
