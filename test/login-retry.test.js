@@ -4,7 +4,9 @@ const assert = require("node:assert/strict");
 process.env.LOG_LEVEL = "error";
 process.env.ELEMENT_TIMEOUT_MS = "20";
 process.env.NAVIGATION_TIMEOUT_MS = "20";
-process.env.MAX_OPERATION_RETRIES = "1";
+process.env.MAX_OPERATION_RETRIES = "2";
+process.env.RETRY_BASE_DELAY_MS = "1";
+process.env.RETRY_MAX_DELAY_MS = "1";
 require("ts-node/register");
 
 const { JobKoreaService } = require("../src/services/jobkorea");
@@ -36,26 +38,28 @@ function createLoginForm({
   buttonFormMethod,
   buttonFormTarget,
   ownerMismatch = false,
-  detachedControl = false,
+  detachedControlFailures = 0,
   onFill = () => undefined,
   onTrial = () => undefined,
   onClick = () => undefined,
 } = {}) {
+  let remainingDetachedControlFailures = detachedControlFailures;
   const formElement = { action, method, target };
   const differentForm = { action, method, target };
   const createControl = (element, behavior) => ({
     async isEnabled() {
       return true;
     },
-    async evaluate(callback) {
-      return callback(element);
-    },
-    async elementHandle() {
-      if (detachedControl && element === idElement) return null;
-      return {
-        element,
-        async dispose() {},
-      };
+    async evaluate(callback, argument) {
+      if (
+        argument &&
+        element === idElement &&
+        remainingDetachedControlFailures > 0
+      ) {
+        remainingDetachedControlFailures -= 1;
+        throw new Error("control detached during evaluation");
+      }
+      return callback(element, argument?.element ?? argument);
     },
     ...behavior,
   });
@@ -100,6 +104,12 @@ function createLoginForm({
   return {
     async evaluate(callback, argument) {
       return callback(formElement, argument?.element ?? argument);
+    },
+    async evaluateHandle(callback) {
+      return {
+        element: callback(formElement),
+        async dispose() {},
+      };
     },
     locator(selector) {
       if (selector.includes("input-id")) return locatorCollection([idInput]);
@@ -353,10 +363,30 @@ test("keeps pre-submit readiness failures retryable", async () => {
   );
 
   const serviceWithDetachedControl = new JobKoreaService(
-    createPage(createLoginForm({ detachedControl: true }))
+    createPage(
+      createLoginForm({ detachedControlFailures: Number.POSITIVE_INFINITY })
+    )
   );
   await assert.rejects(
     serviceWithDetachedControl.login("user-id", "password"),
     error => error instanceof NavigationError && error.retryable === true
   );
+});
+
+test("recovers from a transient ownership detach without duplicate submit", async () => {
+  const fills = [];
+  let clickCount = 0;
+  const form = createLoginForm({
+    detachedControlFailures: 1,
+    onFill: field => fills.push(field),
+    onClick: () => {
+      clickCount += 1;
+    },
+  });
+  const service = new JobKoreaService(createPage(form));
+
+  await service.login("user-id", "password");
+
+  assert.deepEqual(fills, ["id", "password"]);
+  assert.equal(clickCount, 1);
 });

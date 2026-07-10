@@ -43,6 +43,8 @@ test("external redaction removes encoded secrets and untrusted URL paths", () =>
   );
 
   assert.doesNotMatch(redacted, /p@ss word|p%40ss%20word|session=abc|private/);
-  assert.equal(redacted.includes("https://evil.example/"), true);
-  assert.equal(redacted.includes("wss://socket.evil.example/"), true);
+  assert.equal(
+    redacted,
+    "fill failed: *** https://evil.example/ wss://socket.evil.example/"
+  );
 });

@@ -14,6 +14,7 @@ Use the repository-pinned Node.js 24 and pnpm 10.30.3 toolchain.
 - `pnpm exec playwright install chromium` - Install the Chromium runtime for local execution.
 - `pnpm lint` - Run TypeScript type checking without emitting files.
 - `pnpm test` - Run the automated tests. They do not require live JobKorea credentials or network access.
+- `pnpm test:browser` - Launch and close the real sandboxed Chromium runtime; install Chromium first.
 - `pnpm build` - Compile TypeScript into `dist/`.
 - `pnpm start` - Rebuild, then run the application from `dist/index.js`.
 
@@ -92,6 +93,7 @@ When `CAPTURE_FAILURE_ARTIFACTS=true`, failure diagnostics are written only unde
 ## Key Implementation Details
 
 - Uses headless Chromium with the Chromium sandbox explicitly enabled by default.
+- Pins browser-running GitHub Actions jobs to Ubuntu 22.04 and smoke-tests the real sandboxed launch in CI.
 - Restricts every frame navigation to trusted HTTPS JobKorea hosts and fills credentials only when the ID, password, and submit controls share the same safe POST login form.
 - Blocks non-JobKorea HTTP egress while credentials are present, blocks external WebSockets, and disables service workers in the browser context.
 - Handles login popups and advertisement modals.

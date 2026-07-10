@@ -12,7 +12,7 @@ GitHub Actions cron은 매일 08:50, 12:50 KST 실행을 요청합니다. GitHub
 
 Probe job은 후속 workflow dispatch를 위해, 격리된 keepalive job은 예약 실행 유지를 위해 각각 `actions: write` 권한을 사용합니다. 자격증명이 주입되는 실제 이력서 업데이트 job은 `contents: read` 권한만 가지며, 인증 정보 제출은 계정 잠금을 막기 위해 한 번만 수행합니다. 브라우저의 모든 frame 이동은 HTTPS JobKorea 도메인으로 제한하고, 아이디·비밀번호·제출 버튼이 실제로 같은 POST 로그인 폼에 속하며 action과 target이 안전할 때만 자격증명을 입력합니다. 자격증명이 DOM에 있는 동안에는 JobKorea 외부 HTTP 요청을 차단하며 외부 WebSocket과 service worker도 사용하지 않습니다.
 
-Chromium은 sandbox를 명시적으로 활성화하며 GitHub hosted runner의 비-root 환경에서 실행합니다.
+Chromium은 sandbox를 명시적으로 활성화합니다. 브라우저를 실행하는 Actions job은 Chromium의 unprivileged user-namespace sandbox와 호환되는 `ubuntu-22.04`에 고정하며, CI가 실제 sandbox launch를 smoke test합니다.
 
 ## 로컬 실행
 
@@ -43,10 +43,11 @@ TELEGRAM_CHAT_ID=
 pnpm lint
 pnpm test
 pnpm build
+pnpm test:browser
 pnpm start
 ```
 
-`pnpm test`는 실제 JobKorea 계정이나 외부 네트워크 없이 실행되는 자동화 테스트입니다.
+`pnpm test`는 실제 JobKorea 계정이나 외부 네트워크 없이 실행되는 자동화 테스트입니다. `pnpm test:browser`는 Chromium 설치 후 실제 sandbox launch와 정리를 확인합니다.
 
 ## 환경변수
 

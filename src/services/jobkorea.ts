@@ -72,17 +72,14 @@ export class JobKoreaService {
     control: Locator,
     label: string
   ): Promise<void> {
-    const controlHandle = await control.elementHandle();
-    if (!controlHandle) {
-      throw new Error(`${label}의 DOM element가 준비 중 분리되었습니다.`);
-    }
+    const formHandle = await form.evaluateHandle(formElement => formElement);
 
     try {
-      const isOwned = await form.evaluate(
-        (formElement, controlElement) =>
+      const isOwned = await control.evaluate(
+        (controlElement, formElement) =>
           (controlElement as HTMLInputElement | HTMLButtonElement).form ===
           formElement,
-        controlHandle
+        formHandle
       );
       if (isOwned) return;
 
@@ -90,7 +87,7 @@ export class JobKoreaService {
         `${label}의 form owner가 신뢰 로그인 폼과 일치하지 않습니다.`
       );
     } finally {
-      await controlHandle.dispose();
+      await formHandle.dispose();
     }
   }
 
@@ -317,6 +314,12 @@ export class JobKoreaService {
     const deadline = Date.now() + timeout;
 
     while (Date.now() < deadline) {
+      if (page.isClosed()) {
+        throw new Error(
+          "페이지가 닫혀 클릭 가능한 셀렉터를 찾을 수 없습니다."
+        );
+      }
+
       for (const selector of selectors) {
         try {
           const visibleLocators = page.locator(`${selector}:visible`);
@@ -328,7 +331,13 @@ export class JobKoreaService {
               return locator;
             }
           }
-        } catch {
+        } catch (error) {
+          if (
+            page.isClosed() ||
+            (error instanceof Error && /(?:closed|closing)/i.test(error.message))
+          ) {
+            throw error;
+          }
           Logger.debug(`클릭 가능한 셀렉터 확인 실패: ${selector}`);
         }
       }

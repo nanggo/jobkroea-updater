@@ -17,7 +17,8 @@ permissions:
 
 jobs:
   lint-and-build:
-    runs-on: ubuntu-latest
+    # Ubuntu 22.04 permits Chromium's unprivileged user-namespace sandbox.
+    runs-on: ubuntu-22.04
     timeout-minutes: 10
 
     steps:
@@ -39,6 +40,12 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install chromium --with-deps
+
+      - name: Verify sandboxed browser launch
+        run: pnpm test:browser
 
       - name: Run lint
         run: pnpm lint
