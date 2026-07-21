@@ -4,8 +4,10 @@ const assert = require("node:assert/strict");
 require("ts-node/register");
 
 const { configManager } = require("../src/config");
+const { AuthenticationError, NavigationError } = require("../src/types");
 const { Logger } = require("../src/utils/logger");
 const {
+  formatFailureNotification,
   sanitizeNotificationErrorDetail,
 } = require("../src/updateResume");
 
@@ -35,4 +37,30 @@ test("notification errors redact secrets and stay below Telegram's limit", () =>
   assert.doesNotMatch(detail, /notification-password|token=abc|evil\.example\/notification/);
   assert.match(detail, /\[생략됨\]$/);
   assert.doesNotMatch(detail, /<(?!\/)|&(?!amp;|lt;|gt;)/);
+});
+
+test("retryable workflow navigation failures use temporary notifications", () => {
+  const temporaryMessage = formatFailureNotification(
+    new NavigationError("temporary navigation"),
+    3,
+    "2"
+  );
+  assert.match(temporaryMessage, /일시 실패/);
+  assert.match(temporaryMessage, /workflow 3\/4번째 시도/);
+  assert.doesNotMatch(temporaryMessage, /최종 실패/);
+
+  const terminalMessage = formatFailureNotification(
+    new NavigationError("temporary navigation"),
+    3,
+    "4"
+  );
+  assert.match(terminalMessage, /최종 실패/);
+
+  const authenticationMessage = formatFailureNotification(
+    new AuthenticationError("rejected"),
+    1,
+    "1"
+  );
+  assert.match(authenticationMessage, /최종 실패/);
+  assert.doesNotMatch(authenticationMessage, /일시 실패/);
 });

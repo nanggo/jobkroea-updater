@@ -11,8 +11,10 @@ const {
 } = require("../src/utils/retry");
 const {
   AuthenticationError,
+  getFailureExitCode,
   isRetryableJobKoreaError,
   NavigationError,
+  RETRYABLE_NAVIGATION_EXIT_CODE,
 } = require("../src/types");
 
 test("caps server-requested retry delays at the configured maximum", () => {
@@ -84,6 +86,21 @@ test("authentication errors are permanent while navigation errors remain retryab
     false
   );
   assert.equal(isRetryableJobKoreaError(new Error("generic")), true);
+});
+
+test("workflow retry exit code is limited to safe navigation failures", () => {
+  assert.equal(
+    getFailureExitCode(new NavigationError("temporary")),
+    RETRYABLE_NAVIGATION_EXIT_CODE
+  );
+  assert.equal(
+    getFailureExitCode(
+      new NavigationError("security boundary", undefined, false)
+    ),
+    1
+  );
+  assert.equal(getFailureExitCode(new AuthenticationError("rejected")), 1);
+  assert.equal(getFailureExitCode(new Error("unexpected")), 1);
 });
 
 test("withRetry stops when the overall retry budget is exhausted", async () => {

@@ -83,6 +83,17 @@ export class UpdateError extends JobKoreaError {
   }
 }
 
+// EX_TEMPFAIL: the workflow may start a fresh runner only for a navigation
+// failure that is explicitly safe to retry. Authentication and update errors
+// keep the ordinary failure code so credentials or mutations are not repeated.
+export const RETRYABLE_NAVIGATION_EXIT_CODE = 75;
+
+export function getFailureExitCode(error: unknown): number {
+  return error instanceof NavigationError && error.retryable
+    ? RETRYABLE_NAVIGATION_EXIT_CODE
+    : 1;
+}
+
 export function isRetryableJobKoreaError(error: Error): boolean {
   return !(error instanceof JobKoreaError) || error.retryable;
 }
