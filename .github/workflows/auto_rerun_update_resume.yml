@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  rerun-on-probe-failure:
+  rerun-on-dispatch-failure:
     if: >
       (github.event.workflow_run.event == 'schedule' ||
       github.event.workflow_run.event == 'workflow_dispatch') &&
@@ -25,8 +25,8 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Check probe failure
-        id: probe-failure
+      - name: Check retry dispatch failure
+        id: dispatch-failure
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -34,23 +34,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          failed_probe_notifications="$(timeout 30s gh run view "${RUN_ID}" --repo "${GH_REPO}" --json jobs --jq '
+          failed_retry_dispatches="$(timeout 30s gh run view "${RUN_ID}" --repo "${GH_REPO}" --json jobs --jq '
             [.jobs[]
-              | select(.name == "update-resume-probe")
-              | .steps[]
-              | select(.name == "Notify JobKorea probe failure" and .conclusion == "failure")
+              | .steps[]?
+              | select(
+                  (.name == "Notify JobKorea probe failure" or
+                   .name == "Dispatch retry after update failure") and
+                  .conclusion == "failure"
+                )
             ] | length
           ')"
 
-          if [ "${failed_probe_notifications}" = "1" ]; then
+          if [ "${failed_retry_dispatches}" -gt 0 ]; then
             echo "should_rerun=true" >> "${GITHUB_OUTPUT}"
           else
             echo "should_rerun=false" >> "${GITHUB_OUTPUT}"
           fi
 
-      - name: Rerun failed update job
+      - name: Rerun failed retry dispatcher
         if: >
-          steps.probe-failure.outputs.should_rerun == 'true' &&
+          steps.dispatch-failure.outputs.should_rerun == 'true' &&
           github.event.workflow_run.run_attempt < 4
         env:
           GH_TOKEN: ${{ github.token }}
@@ -76,7 +79,7 @@ jobs:
           esac
 
           if [ "${delay_seconds}" -gt 0 ]; then
-            echo "Waiting ${delay_seconds}s before rerunning failed update job."
+            echo "Waiting ${delay_seconds}s before rerunning failed retry dispatcher."
             sleep "${delay_seconds}"
           fi
 
@@ -84,7 +87,7 @@ jobs:
 
       - name: Notify exhausted dispatch fallback
         if: >
-          steps.probe-failure.outputs.should_rerun == 'true' &&
+          steps.dispatch-failure.outputs.should_rerun == 'true' &&
           github.event.workflow_run.run_attempt >= 4
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -95,7 +98,7 @@ jobs:
 
           MESSAGE="$(cat <<EOF
           ❌ 이력서 업데이트 재시도 생성 실패
-          이유: JobKorea probe 실패 후 다음 workflow run을 생성하지 못했습니다.
+          이유: 실패 후 다음 workflow run을 생성하지 못했습니다.
           조치: 자동 보조 재실행도 모두 소진되었습니다.
           확인: ${RUN_URL}
           시간: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S KST')
@@ -110,6 +113,6 @@ jobs:
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "text=${MESSAGE}" || echo "Telegram fallback exhaustion notification failed"
 
-      - name: Skip non-probe failure
-        if: steps.probe-failure.outputs.should_rerun != 'true'
-        run: echo "Failure was not caused by the JobKorea probe; skipping auto rerun."
+      - name: Skip non-dispatch failure
+        if: steps.dispatch-failure.outputs.should_rerun != 'true'
+        run: echo "Failure was not caused by a retry dispatch error; skipping fallback rerun."

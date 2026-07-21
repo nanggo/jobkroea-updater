@@ -110,10 +110,27 @@ jobs:
             delay_seconds=$((RETRY_DELAY_MINUTES * 60))
             echo "Waiting ${delay_seconds}s before dispatching retry attempt ${NEXT_ATTEMPT}/${MAX_ATTEMPTS}."
             sleep "${delay_seconds}"
-            timeout 30s gh workflow run update_resume.yml \
-              --repo "${GH_REPO}" \
-              --ref "${RETRY_REF}" \
-              -f "attempt=${NEXT_ATTEMPT}"
+
+            dispatch_retry() {
+              local dispatch_attempt dispatch_delay
+              for dispatch_attempt in 1 2 3; do
+                if timeout 30s gh workflow run update_resume.yml \
+                  --repo "${GH_REPO}" \
+                  --ref "${RETRY_REF}" \
+                  -f "attempt=${NEXT_ATTEMPT}"; then
+                  return 0
+                fi
+
+                if [ "${dispatch_attempt}" -lt 3 ]; then
+                  dispatch_delay=$((dispatch_attempt * 5))
+                  echo "Retry dispatch failed (${dispatch_attempt}/3). Retrying in ${dispatch_delay}s."
+                  sleep "${dispatch_delay}"
+                fi
+              done
+              return 1
+            }
+
+            dispatch_retry
             echo "retry-dispatched=true" >> "${GITHUB_OUTPUT}"
             exit 0
           else
@@ -155,6 +172,8 @@ jobs:
     # Ubuntu 22.04 permits Chromium's unprivileged user-namespace sandbox.
     runs-on: ubuntu-22.04
     timeout-minutes: 25
+    outputs:
+      update_step_outcome: ${{ steps.update_script.outcome }}
     permissions:
       contents: read
 
@@ -201,6 +220,7 @@ jobs:
         run: pnpm tsc
 
       - name: Run update script
+        id: update_script
         env:
           JOBKOREA_ID: ${{ secrets.JOBKOREA_ID }}
           JOBKOREA_PWD: ${{ secrets.JOBKOREA_PWD }}
@@ -209,6 +229,85 @@ jobs:
           NAVIGATION_TIMEOUT_MS: "30000"
         run: node dist/index.js
 
+  retry-update-failure:
+    name: retry-update-resume
+    needs:
+      - probe-job
+      - update-resume
+    if: >
+      always() &&
+      needs['probe-job'].result == 'success' &&
+      needs['update-resume'].result == 'failure' &&
+      needs['update-resume'].outputs.update_step_outcome == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Dispatch retry after update failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RETRY_REF: ${{ github.ref_name }}
+          RUN_ATTEMPT: ${{ github.event.inputs.attempt || '1' }}
+        run: |
+          set -euo pipefail
+
+          MAX_ATTEMPTS=4
+          case "${RUN_ATTEMPT}" in
+            1|2|3|4)
+              ;;
+            *)
+              RUN_ATTEMPT=1
+              ;;
+          esac
+
+          if [ "${RUN_ATTEMPT}" -ge "${MAX_ATTEMPTS}" ]; then
+            echo "Update job failed on terminal retry attempt ${RUN_ATTEMPT}/${MAX_ATTEMPTS}."
+            exit 0
+          fi
+
+          NEXT_ATTEMPT=$((RUN_ATTEMPT + 1))
+          case "${RUN_ATTEMPT}" in
+            1)
+              RETRY_DELAY_MINUTES=3
+              ;;
+            2)
+              RETRY_DELAY_MINUTES=8
+              ;;
+            3)
+              RETRY_DELAY_MINUTES=15
+              ;;
+          esac
+
+          RETRY_REF="${RETRY_REF:-main}"
+          delay_seconds=$((RETRY_DELAY_MINUTES * 60))
+          echo "Waiting ${delay_seconds}s before dispatching retry attempt ${NEXT_ATTEMPT}/${MAX_ATTEMPTS} after update failure."
+          sleep "${delay_seconds}"
+
+          dispatch_retry() {
+            local dispatch_attempt dispatch_delay
+            for dispatch_attempt in 1 2 3; do
+              if timeout 30s gh workflow run update_resume.yml \
+                --repo "${GH_REPO}" \
+                --ref "${RETRY_REF}" \
+                -f "attempt=${NEXT_ATTEMPT}"; then
+                return 0
+              fi
+
+              if [ "${dispatch_attempt}" -lt 3 ]; then
+                dispatch_delay=$((dispatch_attempt * 5))
+                echo "Retry dispatch failed (${dispatch_attempt}/3). Retrying in ${dispatch_delay}s."
+                sleep "${dispatch_delay}"
+              fi
+            done
+            return 1
+          }
+
+          dispatch_retry
+
   workflow-keepalive:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
@@ -216,3 +315,4 @@ jobs:
       actions: write
     steps:
       - uses: liskin/gh-workflow-keepalive@v1
+        continue-on-error: true
