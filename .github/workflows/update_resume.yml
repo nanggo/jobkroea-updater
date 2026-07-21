@@ -173,6 +173,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     outputs:
+      update_exit_code: ${{ steps.update_script.outputs.exit_code }}
       update_step_outcome: ${{ steps.update_script.outcome }}
     permissions:
       contents: read
@@ -227,7 +228,13 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NAVIGATION_TIMEOUT_MS: "30000"
-        run: node dist/index.js
+        run: |
+          set +e
+          node dist/index.js
+          exit_code=$?
+          set -e
+          echo "exit_code=${exit_code}" >> "${GITHUB_OUTPUT}"
+          exit "${exit_code}"
 
   retry-update-failure:
     name: retry-update-resume
@@ -238,7 +245,8 @@ jobs:
       always() &&
       needs['probe-job'].result == 'success' &&
       needs['update-resume'].result == 'failure' &&
-      needs['update-resume'].outputs.update_step_outcome == 'failure'
+      needs['update-resume'].outputs.update_step_outcome == 'failure' &&
+      needs['update-resume'].outputs.update_exit_code == '75'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

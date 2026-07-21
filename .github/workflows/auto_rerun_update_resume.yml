@@ -34,19 +34,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          failed_retry_dispatches="$(timeout 30s gh run view "${RUN_ID}" --repo "${GH_REPO}" --json jobs --jq '
-            [.jobs[]
-              | .steps[]?
+          retry_job_id="$(timeout 30s gh run view "${RUN_ID}" --repo "${GH_REPO}" --json jobs --jq '
+            [.jobs[] as $job
+              | $job.steps[]?
               | select(
                   (.name == "Notify JobKorea probe failure" or
                    .name == "Dispatch retry after update failure") and
                   .conclusion == "failure"
                 )
-            ] | length
+              | $job.databaseId
+            ] | .[0] // empty
           ')"
 
-          if [ "${failed_retry_dispatches}" -gt 0 ]; then
+          if [ -n "${retry_job_id}" ]; then
             echo "should_rerun=true" >> "${GITHUB_OUTPUT}"
+            echo "retry_job_id=${retry_job_id}" >> "${GITHUB_OUTPUT}"
           else
             echo "should_rerun=false" >> "${GITHUB_OUTPUT}"
           fi
@@ -60,6 +62,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RETRY_JOB_ID: ${{ steps.dispatch-failure.outputs.retry_job_id }}
         run: |
           set -euo pipefail
 
@@ -83,7 +86,9 @@ jobs:
             sleep "${delay_seconds}"
           fi
 
-          timeout 30s gh run rerun "${RUN_ID}" --repo "${GH_REPO}" --failed
+          timeout 30s gh run rerun "${RUN_ID}" \
+            --repo "${GH_REPO}" \
+            --job "${RETRY_JOB_ID}"
 
       - name: Notify exhausted dispatch fallback
         if: >

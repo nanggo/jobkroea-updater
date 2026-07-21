@@ -14,6 +14,7 @@ const { updateResume }: typeof import("./updateResume") = require("./updateResum
 const { ConfigValidator }: typeof import("./utils/validation") = require("./utils/validation");
 const { Logger }: typeof import("./utils/logger") = require("./utils/logger");
 const { configManager }: typeof import("./config") = require("./config");
+const { getFailureExitCode }: typeof import("./types") = require("./types");
 
 function cleanupOldDiagnostics(): void {
   try {
@@ -96,7 +97,7 @@ async function main() {
     Logger.success("애플리케이션 정상 종료");
   } catch (error) {
     Logger.error("애플리케이션 실행 중 치명적 오류 발생", error as Error);
-    process.exitCode = 1;
+    process.exitCode = getFailureExitCode(error);
   }
 }
 
