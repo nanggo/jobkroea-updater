@@ -1,5 +1,6 @@
 # .github/workflows/update_resume.yml
 name: Update Resume
+run-name: Update Resume (attempt ${{ github.event.inputs.attempt || '1' }})
 
 on:
   schedule:
@@ -112,7 +113,33 @@ jobs:
             sleep "${delay_seconds}"
 
             dispatch_retry() {
-              local dispatch_attempt dispatch_delay
+              local active_retry dispatch_attempt dispatch_delay
+
+              retry_already_active() {
+                if ! active_retry="$(
+                  timeout 30s gh run list \
+                    --repo "${GH_REPO}" \
+                    --workflow update_resume.yml \
+                    --branch "${RETRY_REF}" \
+                    --event workflow_dispatch \
+                    --limit 20 \
+                    --json displayTitle,status \
+                    | jq --arg title "Update Resume (attempt ${NEXT_ATTEMPT})" \
+                      'any(.[]; .displayTitle == $title and .status != "completed")'
+                )"; then
+                  echo "Unable to verify whether retry attempt ${NEXT_ATTEMPT} already exists. Refusing a duplicate dispatch."
+                  return 2
+                fi
+                [ "${active_retry}" = "true" ]
+              }
+
+              if retry_already_active; then
+                echo "Retry attempt ${NEXT_ATTEMPT} is already queued or running."
+                return 0
+              elif [ "$?" -eq 2 ]; then
+                return 1
+              fi
+
               for dispatch_attempt in 1 2 3; do
                 if timeout 30s gh workflow run update_resume.yml \
                   --repo "${GH_REPO}" \
@@ -121,10 +148,15 @@ jobs:
                   return 0
                 fi
 
-                if [ "${dispatch_attempt}" -lt 3 ]; then
-                  dispatch_delay=$((dispatch_attempt * 5))
-                  echo "Retry dispatch failed (${dispatch_attempt}/3). Retrying in ${dispatch_delay}s."
-                  sleep "${dispatch_delay}"
+                dispatch_delay=$((dispatch_attempt * 5))
+                echo "Retry dispatch returned an error (${dispatch_attempt}/3). Checking for an accepted run in ${dispatch_delay}s."
+                sleep "${dispatch_delay}"
+
+                if retry_already_active; then
+                  echo "Retry attempt ${NEXT_ATTEMPT} was accepted despite the dispatch error."
+                  return 0
+                elif [ "$?" -eq 2 ]; then
+                  return 1
                 fi
               done
               return 1
@@ -296,7 +328,33 @@ jobs:
           sleep "${delay_seconds}"
 
           dispatch_retry() {
-            local dispatch_attempt dispatch_delay
+            local active_retry dispatch_attempt dispatch_delay
+
+            retry_already_active() {
+              if ! active_retry="$(
+                timeout 30s gh run list \
+                  --repo "${GH_REPO}" \
+                  --workflow update_resume.yml \
+                  --branch "${RETRY_REF}" \
+                  --event workflow_dispatch \
+                  --limit 20 \
+                  --json displayTitle,status \
+                  | jq --arg title "Update Resume (attempt ${NEXT_ATTEMPT})" \
+                    'any(.[]; .displayTitle == $title and .status != "completed")'
+              )"; then
+                echo "Unable to verify whether retry attempt ${NEXT_ATTEMPT} already exists. Refusing a duplicate dispatch."
+                return 2
+              fi
+              [ "${active_retry}" = "true" ]
+            }
+
+            if retry_already_active; then
+              echo "Retry attempt ${NEXT_ATTEMPT} is already queued or running."
+              return 0
+            elif [ "$?" -eq 2 ]; then
+              return 1
+            fi
+
             for dispatch_attempt in 1 2 3; do
               if timeout 30s gh workflow run update_resume.yml \
                 --repo "${GH_REPO}" \
@@ -305,10 +363,15 @@ jobs:
                 return 0
               fi
 
-              if [ "${dispatch_attempt}" -lt 3 ]; then
-                dispatch_delay=$((dispatch_attempt * 5))
-                echo "Retry dispatch failed (${dispatch_attempt}/3). Retrying in ${dispatch_delay}s."
-                sleep "${dispatch_delay}"
+              dispatch_delay=$((dispatch_attempt * 5))
+              echo "Retry dispatch returned an error (${dispatch_attempt}/3). Checking for an accepted run in ${dispatch_delay}s."
+              sleep "${dispatch_delay}"
+
+              if retry_already_active; then
+                echo "Retry attempt ${NEXT_ATTEMPT} was accepted despite the dispatch error."
+                return 0
+              elif [ "$?" -eq 2 ]; then
+                return 1
               fi
             done
             return 1
