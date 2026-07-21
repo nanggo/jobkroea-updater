@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   probe-job:
-    name: update-resume-probe
+    name: update-resume-probe-${{ github.event.inputs.attempt || '1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -237,7 +237,7 @@ jobs:
           exit "${exit_code}"
 
   retry-update-failure:
-    name: retry-update-resume
+    name: retry-update-resume-${{ github.event.inputs.attempt || '1' }}
     needs:
       - probe-job
       - update-resume
