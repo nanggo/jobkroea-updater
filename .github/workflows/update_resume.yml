@@ -260,6 +260,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NAVIGATION_TIMEOUT_MS: "30000"
+          WORKFLOW_ATTEMPT: ${{ github.event.inputs.attempt || '1' }}
         run: |
           set +e
           node dist/index.js

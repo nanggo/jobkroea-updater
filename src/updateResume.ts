@@ -1,5 +1,10 @@
 // src/updateResume.ts
-import { Config, isRetryableJobKoreaError, JobKoreaError } from "./types";
+import {
+  Config,
+  isRetryableJobKoreaError,
+  JobKoreaError,
+  NavigationError,
+} from "./types";
 import { Logger } from "./utils/logger";
 import { BrowserService } from "./services/browser";
 import { JobKoreaService } from "./services/jobkorea";
@@ -143,6 +148,26 @@ async function handleError(
   chatId: string,
   retryCount: number
 ): Promise<void> {
+  const errorMessage = formatFailureNotification(
+    error,
+    retryCount,
+    process.env.WORKFLOW_ATTEMPT
+  );
+
+  Logger.error("최종 에러 발생", error instanceof Error ? error : undefined);
+  await sendTelegramMessage(token, chatId, errorMessage);
+  Logger.info("실패 메시지 전송 완료");
+}
+
+export function formatFailureNotification(
+  error: unknown,
+  retryCount: number,
+  workflowAttemptValue?: string
+): string {
+  const maxWorkflowAttempts = 4;
+  const workflowAttempt = /^[1-4]$/.test(workflowAttemptValue ?? "")
+    ? Number(workflowAttemptValue)
+    : undefined;
   const retryInfo =
     retryCount > 1
       ? `\n재시도 횟수: ${retryCount - 1}번 (모든 재시도 실패)`
@@ -154,12 +179,19 @@ async function handleError(
         ? error.message
         : "알 수 없는 오류";
   const safeMessage = sanitizeNotificationErrorDetail(rawMessage);
-  const errorMessage =
+  const retryableWorkflowFailure =
+    error instanceof NavigationError &&
+    error.retryable &&
+    workflowAttempt !== undefined &&
+    workflowAttempt < maxWorkflowAttempts;
+
+  if (retryableWorkflowFailure) {
+    return `⚠️ 이력서 업데이트 일시 실패\n이유: ${safeMessage} (${error.code})${retryInfo}\n조치: workflow ${workflowAttempt + 1}/${maxWorkflowAttempts}번째 시도를 자동 생성할 예정입니다.`;
+  }
+
+  return (
     error instanceof JobKoreaError
       ? `❌ 이력서 업데이트 최종 실패!\n이유: ${safeMessage} (${error.code})${retryInfo}`
-      : `❌ 이력서 업데이트 최종 실패!\n이유: ${safeMessage}${retryInfo}`;
-
-  Logger.error("최종 에러 발생", error instanceof Error ? error : undefined);
-  await sendTelegramMessage(token, chatId, errorMessage);
-  Logger.info("실패 메시지 전송 완료");
+      : `❌ 이력서 업데이트 최종 실패!\n이유: ${safeMessage}${retryInfo}`
+  );
 }

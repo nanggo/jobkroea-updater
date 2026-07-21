@@ -6,7 +6,7 @@
 
 GitHub Actions cron은 매일 08:50, 12:50 KST 실행을 요청합니다. GitHub의 scheduled workflow는 best-effort 방식이므로 실제 시작 시각은 runner 상황에 따라 늦어질 수 있습니다.
 
-예약 실행에서는 checkout과 의존성 설치 전에 JobKorea 로그인 endpoint를 probe합니다. 연결 오류나 HTTP 4xx/5xx가 발생하거나 실제 이력서 업데이트 단계가 재시도 가능한 navigation 오류로 실패하면 새 workflow run을 생성합니다. 인증, 보안 경계, 업데이트 오류는 계정 잠금이나 중복 변경을 피하기 위해 workflow 단위로 재시도하지 않습니다. 정상 retry chain은 최초 시도를 포함해 총 4번까지 시도하며, 재시도 전에 순서대로 약 3분, 8분, 15분 대기합니다.
+예약 실행에서는 checkout과 의존성 설치 전에 JobKorea 로그인 endpoint를 probe합니다. 연결 오류나 HTTP 4xx/5xx가 발생하거나 실제 이력서 업데이트 단계가 재시도 가능한 navigation 오류로 실패하면 새 workflow run을 생성합니다. 1~3차의 해당 실패는 Telegram에 일시 실패와 다음 시도 예정으로 알리고, 4차에서만 최종 실패로 알립니다. 인증, 보안 경계, 업데이트 오류는 계정 잠금이나 중복 변경을 피하기 위해 workflow 단위로 재시도하지 않습니다. 정상 retry chain은 최초 시도를 포함해 총 4번까지 시도하며, 재시도 전에 순서대로 약 3분, 8분, 15분 대기합니다.
 
 다음 시도를 정상적으로 예약한 미완료 run은 성공으로 오인되지 않도록 실패로 표시됩니다. 이런 run의 최종 결과는 이어서 생성된 `workflow_dispatch` run에서 확인해야 합니다. 각 `workflow_dispatch` 호출은 일시적인 GitHub API 오류에 대비해 최대 3번까지 시도하되, 다음 요청 전에 같은 attempt의 queued/in-progress run이 있는지 확인해 중복 생성을 막습니다. 확인 자체가 실패하면 중복 실행보다 안전한 중단을 선택합니다. 최상위 예약 실행이나 사용자가 시작한 `workflow_dispatch`에서 다음 run 생성 자체가 최종적으로 실패하면 `Auto Rerun Update Resume` workflow가 실패한 updater job을 재실행하지 않고 누락된 다음 `workflow_dispatch`를 직접 생성합니다. 최종 4차 실패는 별도 단계로 표시해 보조 dispatch 대상에서 제외합니다.
 
