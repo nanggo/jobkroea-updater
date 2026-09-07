@@ -8,7 +8,7 @@ GitHub Actions cron은 매일 08:50, 12:50 KST 실행을 요청합니다. GitHub
 
 예약 실행에서는 checkout과 의존성 설치 전에 JobKorea 로그인 endpoint를 probe합니다. 연결 오류나 HTTP 4xx/5xx가 발생하거나 실제 이력서 업데이트 단계가 재시도 가능한 navigation 오류로 실패하면 새 workflow run을 생성합니다. 1~3차의 해당 실패는 Telegram에 일시 실패와 다음 시도 예정으로 알리고, 4차에서만 최종 실패로 알립니다. 인증, 보안 경계, 업데이트 오류는 계정 잠금이나 중복 변경을 피하기 위해 workflow 단위로 재시도하지 않습니다. 정상 retry chain은 최초 시도를 포함해 총 4번까지 시도하며, 재시도 전에 순서대로 약 3분, 8분, 15분 대기합니다.
 
-다음 시도를 정상적으로 예약한 미완료 run은 성공으로 오인되지 않도록 실패로 표시됩니다. 이런 run의 최종 결과는 이어서 생성된 `workflow_dispatch` run에서 확인해야 합니다. 각 `workflow_dispatch` 호출은 일시적인 GitHub API 오류에 대비해 최대 3번까지 시도하되, 다음 요청 전에 같은 attempt의 queued/in-progress run이 있는지 확인해 중복 생성을 막습니다. 확인 자체가 실패하면 중복 실행보다 안전한 중단을 선택합니다. 최상위 예약 실행이나 사용자가 시작한 `workflow_dispatch`에서 다음 run 생성 자체가 최종적으로 실패하면 `Auto Rerun Update Resume` workflow가 실패한 updater job을 재실행하지 않고 누락된 다음 `workflow_dispatch`를 직접 생성합니다. 최종 4차 실패는 별도 단계로 표시해 보조 dispatch 대상에서 제외합니다.
+다음 시도를 정상적으로 예약한 미완료 run은 성공으로 오인되지 않도록 실패로 표시됩니다. 이런 run의 최종 결과는 이어서 생성된 `workflow_dispatch` run에서 확인해야 합니다. 각 `workflow_dispatch` 호출은 일시적인 GitHub API 오류에 대비해 최대 3번까지 시도하되, 다음 요청 전에 최초 실행 ID(`chain_id`)와 다음 attempt가 같은 run이 있는지 완료된 실행까지 확인합니다. 조회는 최초 실행 시각 이후의 모든 API 페이지를 확인하므로 다른 날 실행이나 다른 retry chain과 혼동하지 않습니다. 확인 자체가 실패하면 중복 실행보다 안전한 중단을 선택합니다. 수동으로 새 실행을 시작할 때는 `chain_id`를 비워 둡니다. 보조 workflow가 실패한 실행 제목에서 원래 chain을 확인할 수 없는 경우(이전 형식의 실행 포함)에는 추측해서 재시도하지 않습니다. 최상위 예약 실행이나 사용자가 시작한 `workflow_dispatch`에서 다음 run 생성 자체가 최종적으로 실패하면 `Auto Rerun Update Resume` workflow가 실패한 updater job을 재실행하지 않고 누락된 다음 `workflow_dispatch`를 직접 생성합니다. 최종 4차 실패는 별도 단계로 표시해 보조 dispatch 대상에서 제외합니다.
 
 Probe와 update retry job은 후속 workflow dispatch를 위해, 격리된 keepalive job은 예약 실행 유지를 위해 각각 `actions: write` 권한을 사용합니다. Keepalive는 best-effort 보조 작업이라 외부 GitHub API 장애가 전체 업데이트 결과를 실패로 바꾸지 않습니다. 자격증명이 주입되는 실제 이력서 업데이트 job은 `contents: read` 권한만 가지며, 인증 정보 제출은 계정 잠금을 막기 위해 한 번만 수행합니다. 브라우저의 모든 frame 이동은 HTTPS JobKorea 도메인으로 제한하고, 아이디·비밀번호·제출 버튼이 실제로 같은 POST 로그인 폼에 속하며 action과 target이 안전할 때만 자격증명을 입력합니다. 자격증명이 DOM에 있는 동안에는 JobKorea 외부 HTTP 요청을 차단하며 외부 WebSocket과 service worker도 사용하지 않습니다.
 
@@ -47,7 +47,7 @@ pnpm test:browser
 pnpm start
 ```
 
-`pnpm test`는 실제 JobKorea 계정이나 외부 네트워크 없이 실행되는 자동화 테스트입니다. `pnpm test:browser`는 Chromium 설치 후 실제 sandbox launch와 정리를 확인합니다.
+`pnpm test`는 실제 JobKorea 계정이나 외부 네트워크 없이 실행되는 자동화 테스트입니다. `pnpm test:browser`는 Chromium 설치 후 실제 sandbox launch와 정리, 로컬 HTML에서의 이력서 팝업·성공/실패 다이얼로그·로그인 팝업 처리를 확인합니다. 모든 페이지 응답을 로컬 fixture로 대체하며 실제 계정이나 외부 네트워크를 사용하지 않습니다.
 
 ## 환경변수
 
