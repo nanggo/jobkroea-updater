@@ -14,7 +14,7 @@ Use the repository-pinned Node.js 24 and pnpm 10.30.3 toolchain.
 - `pnpm exec playwright install chromium` - Install the Chromium runtime for local execution.
 - `pnpm lint` - Run TypeScript type checking without emitting files.
 - `pnpm test` - Run the automated tests. They do not require live JobKorea credentials or network access.
-- `pnpm test:browser` - Launch and close the real sandboxed Chromium runtime; install Chromium first.
+- `pnpm test:browser` - Launch the real sandboxed Chromium runtime and verify popup/dialog flows against local HTML; install Chromium first.
 - `pnpm build` - Compile TypeScript into `dist/`.
 - `pnpm start` - Rebuild, then run the application from `dist/index.js`.
 
@@ -82,6 +82,7 @@ When `CAPTURE_FAILURE_ARTIFACTS=true`, failure diagnostics are written only unde
 - The probe and isolated keepalive jobs receive `actions: write`; the credentialed update job is limited to `contents: read`.
 - In the normal retry chain, connection failures and HTTP 4xx/5xx responses can trigger at most 4 total workflow attempts, with approximate 3, 8, and 15 minute delays.
 - A run that successfully dispatches its replacement is intentionally marked failed because it did not update the resume. Follow the subsequent `workflow_dispatch` run for the eventual result.
+- Retries propagate the original run ID as `chain_id`. Duplicate detection checks every API page since that run started and includes completed runs. Leave `chain_id` empty for a new manual run; fallback refuses legacy runs without a verifiable chain.
 - `Auto Rerun Update Resume` backs up replacement-dispatch failures from both scheduled and `workflow_dispatch` runs. Terminal attempt failures use a separate step and are not rerun.
 - The workflow caches pnpm packages and Playwright browser binaries after the probe succeeds.
 - The workflow does not upload failure screenshots or HTML artifacts.

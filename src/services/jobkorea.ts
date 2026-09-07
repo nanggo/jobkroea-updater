@@ -607,11 +607,14 @@ export class JobKoreaService {
       await popup.waitForSelector('a[href*="나중에 변경"]', {
         timeout: this.timeouts.element,
       });
-      const [dialog] = await Promise.all([
-        popup.waitForEvent("dialog", { timeout: this.timeouts.popup }),
-        popup.click('a[href*="나중에 변경"]'),
+      await Promise.all([
+        popup.waitForEvent("dialog", { timeout: this.timeouts.popup }).then(async dialog => {
+          this.assertNoBlockedNavigation(popup, "authentication");
+          this.assertTrustedUrl(popup.url(), "authentication");
+          await dialog.dismiss();
+        }),
+        popup.click('a[href*="나중에 변경"]', { timeout: this.timeouts.element }),
       ]);
-      await dialog.dismiss();
       this.assertNoBlockedNavigation(popup, "authentication");
       Logger.success("팝업 처리 완료");
     } catch (error) {
@@ -729,35 +732,37 @@ export class JobKoreaService {
           await updateButton.click({ trial: true });
           this.assertNoBlockedNavigation(resumePopup, "update");
           updateSubmitted = true;
-          const [dialog] = await Promise.all([
+          // A click can wait for its dialog to close. Handle the dialog while
+          // the click is pending, and observe failures from both operations.
+          await Promise.all([
             resumePopup.waitForEvent("dialog", {
               timeout: this.timeouts.element,
+            }).then(async dialog => {
+              this.assertNoBlockedNavigation(popup, "update");
+              this.assertTrustedUrl(popup.url(), "update");
+              const successPatterns = configManager.getUpdateConfig().successPatterns;
+              const dialogMessage = dialog.message();
+              const isSuccess = successPatterns.some(pattern =>
+                dialogMessage.includes(pattern)
+              );
+
+              if (!isSuccess) {
+                await dialog.dismiss();
+                throw new UpdateError(
+                  `예상치 못한 다이얼로그 발생: ${dialogMessage}`,
+                  { dialogMessage, updateSubmitted },
+                  false
+                );
+              }
+
+              Logger.info(`성공 다이얼로그 확인: "${dialogMessage}"`);
+              await dialog.accept();
             }),
-            updateButton.click(),
+            updateButton.click({ timeout: this.timeouts.element }),
           ]);
           this.assertNoBlockedNavigation(resumePopup, "update");
           this.assertTrustedUrl(resumePopup.url(), "update");
-
-          const successPatterns = configManager.getUpdateConfig().successPatterns;
-          const dialogMessage = dialog.message();
-          const isSuccess = successPatterns.some(pattern =>
-            dialogMessage.includes(pattern)
-          );
-
-          if (isSuccess) {
-            Logger.info(`성공 다이얼로그 확인: "${dialogMessage}"`);
-            await dialog.accept();
-            Logger.success("경력 정보 업데이트 완료");
-          } else {
-            const errorMessage = `예상치 못한 다이얼로그 발생: ${dialogMessage}`;
-            Logger.error(errorMessage);
-            await dialog.dismiss();
-            throw new UpdateError(
-              errorMessage,
-              { dialogMessage, updateSubmitted },
-              false
-            );
-          }
+          Logger.success("경력 정보 업데이트 완료");
         } catch (caughtError) {
           let error = caughtError;
           try {

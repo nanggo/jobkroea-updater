@@ -1,6 +1,6 @@
 # .github/workflows/update_resume.yml
 name: Update Resume
-run-name: Update Resume (attempt ${{ github.event.inputs.attempt || '1' }})
+run-name: Update Resume (attempt ${{ github.event.inputs.attempt || '1' }}, chain ${{ github.event.inputs.chain_id || github.run_id }})
 
 on:
   schedule:
@@ -8,6 +8,11 @@ on:
     - cron: "50 3 * * *" # KST 기준 오후 12:50 (UTC 3:50)
   workflow_dispatch:
     inputs:
+      chain_id:
+        description: "Original workflow run ID (automatic retries only; leave empty for a new run)"
+        required: false
+        default: ""
+        type: string
       attempt:
         description: "Retry attempt number"
         required: false
@@ -58,6 +63,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.event.inputs.attempt || '1' }}
+          CHAIN_ID: ${{ github.event.inputs.chain_id || github.run_id }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RETRY_REF: ${{ github.ref_name }}
@@ -113,28 +119,40 @@ jobs:
             sleep "${delay_seconds}"
 
             dispatch_retry() {
-              local active_retry dispatch_attempt dispatch_delay
+              local existing_retry dispatch_attempt dispatch_delay chain_created_at
 
-              retry_already_active() {
-                if ! active_retry="$(
-                  timeout 30s gh run list \
-                    --repo "${GH_REPO}" \
-                    --workflow update_resume.yml \
-                    --branch "${RETRY_REF}" \
-                    --event workflow_dispatch \
-                    --limit 20 \
-                    --json displayTitle,status \
-                    | jq --arg title "Update Resume (attempt ${NEXT_ATTEMPT})" \
-                      'any(.[]; .displayTitle == $title and .status != "completed")'
+              if [[ ! "${CHAIN_ID}" =~ ^[0-9]+$ ]] || [[ ! "${NEXT_ATTEMPT}" =~ ^[2-4]$ ]]; then
+                echo "Invalid retry chain or attempt; refusing dispatch."
+                return 1
+              fi
+              if ! chain_created_at="$(timeout 30s gh run view "${CHAIN_ID}" --repo "${GH_REPO}" --json createdAt --jq .createdAt)"; then
+                echo "Unable to read the retry chain start; refusing dispatch."
+                return 1
+              fi
+              if [[ ! "${chain_created_at}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+                echo "Invalid retry chain start; refusing dispatch."
+                return 1
+              fi
+
+              retry_already_exists() {
+                if ! existing_retry="$(
+                  timeout 30s gh api --paginate --slurp --method GET \
+                    "repos/${GH_REPO}/actions/workflows/update_resume.yml/runs" \
+                    -f "branch=${RETRY_REF}" \
+                    -f event=workflow_dispatch \
+                    -f "created=>=${chain_created_at}" \
+                    -f per_page=100 \
+                    | jq --arg title "Update Resume (attempt ${NEXT_ATTEMPT}, chain ${CHAIN_ID})" \
+                      'any(.[].workflow_runs[]; .display_title == $title)'
                 )"; then
                   echo "Unable to verify whether retry attempt ${NEXT_ATTEMPT} already exists. Refusing a duplicate dispatch."
                   return 2
                 fi
-                [ "${active_retry}" = "true" ]
+                [ "${existing_retry}" = "true" ]
               }
 
-              if retry_already_active; then
-                echo "Retry attempt ${NEXT_ATTEMPT} is already queued or running."
+              if retry_already_exists; then
+                echo "Retry attempt ${NEXT_ATTEMPT} already exists (including completed runs)."
                 return 0
               elif [ "$?" -eq 2 ]; then
                 return 1
@@ -144,7 +162,8 @@ jobs:
                 if timeout 30s gh workflow run update_resume.yml \
                   --repo "${GH_REPO}" \
                   --ref "${RETRY_REF}" \
-                  -f "attempt=${NEXT_ATTEMPT}"; then
+                  -f "attempt=${NEXT_ATTEMPT}" \
+                  -f "chain_id=${CHAIN_ID}"; then
                   return 0
                 fi
 
@@ -152,7 +171,7 @@ jobs:
                 echo "Retry dispatch returned an error (${dispatch_attempt}/3). Checking for an accepted run in ${dispatch_delay}s."
                 sleep "${dispatch_delay}"
 
-                if retry_already_active; then
+                if retry_already_exists; then
                   echo "Retry attempt ${NEXT_ATTEMPT} was accepted despite the dispatch error."
                   return 0
                 elif [ "$?" -eq 2 ]; then
@@ -293,6 +312,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RETRY_REF: ${{ github.ref_name }}
           RUN_ATTEMPT: ${{ github.event.inputs.attempt || '1' }}
+          CHAIN_ID: ${{ github.event.inputs.chain_id || github.run_id }}
         run: |
           set -euo pipefail
 
@@ -329,28 +349,40 @@ jobs:
           sleep "${delay_seconds}"
 
           dispatch_retry() {
-            local active_retry dispatch_attempt dispatch_delay
+            local existing_retry dispatch_attempt dispatch_delay chain_created_at
 
-            retry_already_active() {
-              if ! active_retry="$(
-                timeout 30s gh run list \
-                  --repo "${GH_REPO}" \
-                  --workflow update_resume.yml \
-                  --branch "${RETRY_REF}" \
-                  --event workflow_dispatch \
-                  --limit 20 \
-                  --json displayTitle,status \
-                  | jq --arg title "Update Resume (attempt ${NEXT_ATTEMPT})" \
-                    'any(.[]; .displayTitle == $title and .status != "completed")'
+            if [[ ! "${CHAIN_ID}" =~ ^[0-9]+$ ]] || [[ ! "${NEXT_ATTEMPT}" =~ ^[2-4]$ ]]; then
+              echo "Invalid retry chain or attempt; refusing dispatch."
+              return 1
+            fi
+            if ! chain_created_at="$(timeout 30s gh run view "${CHAIN_ID}" --repo "${GH_REPO}" --json createdAt --jq .createdAt)"; then
+              echo "Unable to read the retry chain start; refusing dispatch."
+              return 1
+            fi
+            if [[ ! "${chain_created_at}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+              echo "Invalid retry chain start; refusing dispatch."
+              return 1
+            fi
+
+            retry_already_exists() {
+              if ! existing_retry="$(
+                timeout 30s gh api --paginate --slurp --method GET \
+                  "repos/${GH_REPO}/actions/workflows/update_resume.yml/runs" \
+                  -f "branch=${RETRY_REF}" \
+                  -f event=workflow_dispatch \
+                  -f "created=>=${chain_created_at}" \
+                  -f per_page=100 \
+                  | jq --arg title "Update Resume (attempt ${NEXT_ATTEMPT}, chain ${CHAIN_ID})" \
+                    'any(.[].workflow_runs[]; .display_title == $title)'
               )"; then
                 echo "Unable to verify whether retry attempt ${NEXT_ATTEMPT} already exists. Refusing a duplicate dispatch."
                 return 2
               fi
-              [ "${active_retry}" = "true" ]
+              [ "${existing_retry}" = "true" ]
             }
 
-            if retry_already_active; then
-              echo "Retry attempt ${NEXT_ATTEMPT} is already queued or running."
+            if retry_already_exists; then
+              echo "Retry attempt ${NEXT_ATTEMPT} already exists (including completed runs)."
               return 0
             elif [ "$?" -eq 2 ]; then
               return 1
@@ -360,7 +392,8 @@ jobs:
               if timeout 30s gh workflow run update_resume.yml \
                 --repo "${GH_REPO}" \
                 --ref "${RETRY_REF}" \
-                -f "attempt=${NEXT_ATTEMPT}"; then
+                -f "attempt=${NEXT_ATTEMPT}" \
+                -f "chain_id=${CHAIN_ID}"; then
                 return 0
               fi
 
@@ -368,7 +401,7 @@ jobs:
               echo "Retry dispatch returned an error (${dispatch_attempt}/3). Checking for an accepted run in ${dispatch_delay}s."
               sleep "${dispatch_delay}"
 
-              if retry_already_active; then
+              if retry_already_exists; then
                 echo "Retry attempt ${NEXT_ATTEMPT} was accepted despite the dispatch error."
                 return 0
               elif [ "$?" -eq 2 ]; then
