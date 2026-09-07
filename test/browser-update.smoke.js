@@ -2,6 +2,13 @@ const assert = require("node:assert/strict");
 const { JobKoreaService } = require("../src/services/jobkorea");
 const { UpdateError } = require("../src/types");
 
+const resumePages = {
+  sync: '<button class="button-update" onclick="window.recordUpdate(); alert(\'이력서 수정일이 오늘날짜로 업데이트 되었습니다\')">Update</button>',
+  async: '<button class="button-update" onclick="window.recordUpdate(); setTimeout(() => alert(\'이력서 수정일이 오늘날짜로 업데이트 되었습니다\'), 50)">Update</button>',
+  unexpected: '<button class="button-update" onclick="window.recordUpdate(); alert(\'업데이트에 실패했습니다\')">Update</button>',
+  missing: '<button class="button-update" onclick="window.recordUpdate()">Update</button>',
+};
+
 // Exercise the real service and Chromium without contacting JobKorea or Telegram.
 exports.verifyBrowserUpdateFlow = async function (page) {
   const context = page.context();
@@ -29,21 +36,9 @@ exports.verifyBrowserUpdateFlow = async function (page) {
     }
     if (pathname !== "/User/Resume/View") return route.abort();
 
-    const message = scenario === "unexpected"
-      ? "업데이트에 실패했습니다"
-      : "이력서 수정일이 오늘날짜로 업데이트 되었습니다";
-    const alert = `alert(${JSON.stringify(message)})`;
-    const action = scenario === "missing" ? "" : scenario === "async"
-      ? `setTimeout(() => ${alert}, 50)`
-      : alert;
     return route.fulfill({
       contentType: "text/html; charset=utf-8",
-      body: `<button class="button-update">Update</button><script>
-        document.querySelector('button').onclick = () => {
-          window.recordUpdate();
-          ${action};
-        };
-      </script>`,
+      body: resumePages[scenario],
     });
   });
 
