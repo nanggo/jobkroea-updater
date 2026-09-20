@@ -4,7 +4,7 @@ import * as path from "path";
 
 let dotenvLoadError: unknown;
 try {
-  require("dotenv").config();
+  require("dotenv").config({ quiet: true });
 } catch (error) {
   dotenvLoadError = error;
 }
