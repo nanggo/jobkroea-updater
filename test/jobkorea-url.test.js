@@ -1,14 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-require("ts-node/register");
-
 const {
   isJobKoreaLoginPath,
   isTrustedJobKoreaUrl,
   isTrustedJobKoreaWebSocketUrl,
   requireTrustedJobKoreaUrl,
-} = require("../src/utils/jobkoreaUrl");
+} = require("../dist/utils/jobkoreaUrl");
 
 test("allows only HTTPS JobKorea hosts on the default port", () => {
   assert.equal(isTrustedJobKoreaUrl("https://jobkorea.co.kr/Login/"), true);

@@ -2,9 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 process.env.LOG_LEVEL = "error";
-require("ts-node/register");
 
-const { JobKoreaService } = require("../src/services/jobkorea");
+const { JobKoreaService } = require("../dist/services/jobkorea");
 
 test("selector fallback targets visible matches instead of a hidden first node", async () => {
   let waitedSelector = "";

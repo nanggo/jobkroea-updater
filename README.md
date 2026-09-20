@@ -47,6 +47,8 @@ pnpm test:browser
 pnpm start
 ```
 
+`pnpm test`와 `pnpm test:browser`는 `dist/`를 비운 뒤 새로 빌드한 JavaScript를 검증합니다. 테스트에서도 운영과 동일한 CommonJS 빌드 결과를 사용하며 `ts-node` 로더에 의존하지 않습니다.
+
 `pnpm test`는 실제 JobKorea 계정이나 외부 네트워크 없이 실행되는 자동화 테스트입니다. `pnpm test:browser`는 Chromium 설치 후 실제 sandbox launch와 정리, 로컬 HTML에서의 이력서 팝업·성공/실패 다이얼로그·로그인 팝업 처리를 확인합니다. 모든 페이지 응답을 로컬 fixture로 대체하며 실제 계정이나 외부 네트워크를 사용하지 않습니다.
 
 ## 환경변수

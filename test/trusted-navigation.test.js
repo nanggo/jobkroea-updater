@@ -3,14 +3,13 @@ const assert = require("node:assert/strict");
 
 process.env.LOG_LEVEL = "error";
 process.env.MAX_OPERATION_RETRIES = "3";
-require("ts-node/register");
 
-const { JobKoreaService } = require("../src/services/jobkorea");
-const { NavigationError } = require("../src/types");
+const { JobKoreaService } = require("../dist/services/jobkorea");
+const { NavigationError } = require("../dist/types");
 const {
   recordBlockedContextNavigation,
   recordBlockedTopLevelNavigation,
-} = require("../src/utils/trustedNavigation");
+} = require("../dist/utils/trustedNavigation");
 
 test("a route-blocked redirect fails navigation once without retrying", async () => {
   let gotoAttempts = 0;

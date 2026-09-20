@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
-const { JobKoreaService } = require("../src/services/jobkorea");
-const { UpdateError } = require("../src/types");
+const { JobKoreaService } = require("../dist/services/jobkorea");
+const { UpdateError } = require("../dist/types");
 
 const resumePages = {
   sync: '<button class="button-update" onclick="window.recordUpdate(); alert(\'이력서 수정일이 오늘날짜로 업데이트 되었습니다\')">Update</button>',

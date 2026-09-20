@@ -269,7 +269,7 @@ jobs:
         run: npx playwright install-deps chromium
 
       - name: Build project
-        run: pnpm tsc
+        run: pnpm build
 
       - name: Run update script
         id: update_script
