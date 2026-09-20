@@ -1,15 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-require("ts-node/register");
-
-const { configManager } = require("../src/config");
-const { AuthenticationError, NavigationError } = require("../src/types");
-const { Logger } = require("../src/utils/logger");
+const { configManager } = require("../dist/config");
+const { AuthenticationError, NavigationError } = require("../dist/types");
+const { Logger } = require("../dist/utils/logger");
 const {
   formatFailureNotification,
   sanitizeNotificationErrorDetail,
-} = require("../src/updateResume");
+} = require("../dist/updateResume");
 
 test("update success patterns accept the observed resume dialog but not generic edits", () => {
   const patterns = configManager.getUpdateConfig().successPatterns;

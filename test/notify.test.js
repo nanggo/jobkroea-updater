@@ -1,12 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-require("ts-node/register");
-
 const {
   canHonorTelegramRetryAfter,
   parseTelegramRetryAfterMs,
-} = require("../src/notify");
+} = require("../dist/notify");
 
 test("prefers Telegram response_parameters.retry_after over the HTTP header", () => {
   const body = JSON.stringify({

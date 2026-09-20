@@ -2,13 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 process.env.LOG_LEVEL = "error";
-require("ts-node/register");
 
-const { JobKoreaService } = require("../src/services/jobkorea");
-const { UpdateError } = require("../src/types");
+const { JobKoreaService } = require("../dist/services/jobkorea");
+const { UpdateError } = require("../dist/types");
 const {
   recordBlockedTopLevelNavigation,
-} = require("../src/utils/trustedNavigation");
+} = require("../dist/utils/trustedNavigation");
 
 test("observes dialog and click failures together and closes the popup without retrying mutation", async () => {
   let updateClicks = 0;

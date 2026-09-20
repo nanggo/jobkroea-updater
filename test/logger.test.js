@@ -2,9 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 process.env.LOG_LEVEL = "info";
-require("ts-node/register");
 
-const { Logger } = require("../src/utils/logger");
+const { Logger } = require("../dist/utils/logger");
 
 test("masks sensitive nested context and removes URL query/hash details", () => {
   const originalLog = console.log;

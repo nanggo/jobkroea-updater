@@ -1,16 +1,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-require("ts-node/register");
-
 const {
   createBrowserEnvironment,
   shouldBlockRequest,
-} = require("../src/services/browser");
+} = require("../dist/services/browser");
 const {
   armCredentialEgressGuard,
   isCredentialEgressGuardArmed,
-} = require("../src/utils/trustedNavigation");
+} = require("../dist/utils/trustedNavigation");
 
 test("passes only runtime essentials to Chromium and excludes application secrets", () => {
   const environment = createBrowserEnvironment({

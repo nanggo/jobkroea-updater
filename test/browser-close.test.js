@@ -2,9 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 process.env.LOG_LEVEL = "error";
-require("ts-node/register");
 
-const { BrowserService } = require("../src/services/browser");
+const { BrowserService } = require("../dist/services/browser");
 
 test("continues closing context and browser when page.close fails", async () => {
   const service = new BrowserService();

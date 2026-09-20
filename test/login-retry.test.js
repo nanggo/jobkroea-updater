@@ -7,14 +7,13 @@ process.env.NAVIGATION_TIMEOUT_MS = "20";
 process.env.MAX_OPERATION_RETRIES = "2";
 process.env.RETRY_BASE_DELAY_MS = "1";
 process.env.RETRY_MAX_DELAY_MS = "1";
-require("ts-node/register");
 
-const { JobKoreaService } = require("../src/services/jobkorea");
-const { AuthenticationError, NavigationError } = require("../src/types");
+const { JobKoreaService } = require("../dist/services/jobkorea");
+const { AuthenticationError, NavigationError } = require("../dist/types");
 const {
   isCredentialEgressGuardArmed,
   recordBlockedTopLevelNavigation,
-} = require("../src/utils/trustedNavigation");
+} = require("../dist/utils/trustedNavigation");
 
 function locatorCollection(items) {
   return {

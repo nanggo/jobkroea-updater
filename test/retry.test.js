@@ -2,20 +2,19 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 process.env.LOG_LEVEL = "error";
-require("ts-node/register");
 
 const {
   calculateRetryDelay,
   withBrowserRestart,
   withRetry,
-} = require("../src/utils/retry");
+} = require("../dist/utils/retry");
 const {
   AuthenticationError,
   getFailureExitCode,
   isRetryableJobKoreaError,
   NavigationError,
   RETRYABLE_NAVIGATION_EXIT_CODE,
-} = require("../src/types");
+} = require("../dist/types");
 
 test("caps server-requested retry delays at the configured maximum", () => {
   const error = Object.assign(new Error("rate limited"), {

@@ -3,9 +3,7 @@ process.env.LOG_LEVEL = "error";
 process.env.ELEMENT_TIMEOUT_MS = "1000";
 process.env.POPUP_TIMEOUT_MS = "1000";
 
-require("ts-node/register");
-
-const { BrowserService } = require("../src/services/browser");
+const { BrowserService } = require("../dist/services/browser");
 const { verifyBrowserUpdateFlow } = require("./browser-update.smoke");
 
 async function main() {
